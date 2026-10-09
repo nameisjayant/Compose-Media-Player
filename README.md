@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/logo.png" width="120" alt="Android Practice logo: a champagne play button inside a seek ring">
+
 # 🎬 Android Practice — Compose Videos
 
 **An Instagram-style Reels feed and a YouTube-style floating video player, built entirely with Jetpack Compose and Media3.**
@@ -104,6 +106,7 @@ The full video walks through every feature, with a caption for each:
 - **Bottom tab bar** (Reels / Videos) that tucks away under the full-screen player and slides back with the mini player.
 - **Type-safe navigation** with `@Serializable` routes.
 - **Edge-to-edge**, dark media theme.
+- **Logo & splash screen** — a champagne play button inside a seek ring, with the playhead riding its edge. Adaptive launcher icon with a themed (monochrome) layer for Android 13+, plus raster fallbacks for API 24–25. The splash uses `core-splashscreen`: on Android 12+ the ring draws itself, the playhead follows it and the play button pops in; older versions show the static mark. It then grows and fades into the app.
 - **Fully offline** — every clip ships inside `res/raw`, no network needed.
 
 ---
@@ -228,6 +231,7 @@ All versions are managed in [`gradle/libs.versions.toml`](gradle/libs.versions.t
 | Category | Library | Version |
 |---|---|---|
 | **Core** | `androidx.core:core-ktx` | 1.19.1 |
+| | `androidx.core:core-splashscreen` | 1.2.0 |
 | | `androidx.activity:activity-compose` | 1.13.0 |
 | **Compose** | `androidx.compose:compose-bom` | 2026.09.00 |
 | | `androidx.compose.ui:ui`, `ui-graphics`, `ui-tooling-preview` | via BOM |

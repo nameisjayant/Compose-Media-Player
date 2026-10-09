@@ -2,6 +2,8 @@ package com.nameisjayant.composevideos
 
 import android.graphics.Color
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.animation.AccelerateInterpolator
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -14,6 +16,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -31,6 +34,7 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplash()
         super.onCreate(savedInstanceState)
         // The media shell is always dark, so system bar icons are always light.
         enableEdgeToEdge(
@@ -86,5 +90,34 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Shows the logo splash. On a cold start it stays up until the logo animation has played,
+     * then the mark grows and fades into the app.
+     */
+    private fun installSplash() {
+        val splash = installSplashScreen()
+        val shownAt = SystemClock.uptimeMillis()
+        splash.setKeepOnScreenCondition { SystemClock.uptimeMillis() - shownAt < SPLASH_MIN_MILLIS }
+        splash.setOnExitAnimationListener { provider ->
+            provider.iconView.animate()
+                .scaleX(1.25f)
+                .scaleY(1.25f)
+                .setDuration(SPLASH_EXIT_MILLIS)
+                .setInterpolator(AccelerateInterpolator())
+                .start()
+            provider.view.animate()
+                .alpha(0f)
+                .setDuration(SPLASH_EXIT_MILLIS)
+                .withEndAction { provider.remove() }
+                .start()
+        }
+    }
+
+    private companion object {
+        /** Matches the length of the animated splash icon (ic_splash_animated). */
+        const val SPLASH_MIN_MILLIS = 700L
+        const val SPLASH_EXIT_MILLIS = 250L
     }
 }

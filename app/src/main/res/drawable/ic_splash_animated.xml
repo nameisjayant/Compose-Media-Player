@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash animation (Android 12+): the seek ring draws itself while the playhead rides
+     along its edge, then the play button pops in. Ends on the launcher mark. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector
+            android:width="108dp"
+            android:height="108dp"
+            android:viewportWidth="108"
+            android:viewportHeight="108">
+            <path
+                android:name="ring"
+                android:pathData="M54,30A24,24 0,1 1,33.22 42"
+                android:strokeWidth="4"
+                android:strokeLineCap="round"
+                android:trimPathEnd="0">
+                <aapt:attr name="android:strokeColor">
+                    <gradient
+                        android:endX="30"
+                        android:endY="78"
+                        android:startX="78"
+                        android:startY="30"
+                        android:type="linear">
+                        <item
+                            android:color="#FFF3D98B"
+                            android:offset="0.0" />
+                        <item
+                            android:color="#FFB8893B"
+                            android:offset="1.0" />
+                    </gradient>
+                </aapt:attr>
+            </path>
+            <group
+                android:name="playhead"
+                android:pivotX="54"
+                android:pivotY="54"
+                android:rotation="-300">
+                <path
+                    android:fillColor="#FFF5F2EC"
+                    android:pathData="M33.22,42m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+            </group>
+            <group
+                android:name="play"
+                android:pivotX="56"
+                android:pivotY="54"
+                android:scaleX="0"
+                android:scaleY="0">
+                <path android:pathData="M48,45.5L48,62.5Q48,66 50.96,64.13L64.04,55.87Q67,54 64.04,52.13L50.96,43.87Q48,42 48,45.5Z">
+                    <aapt:attr name="android:fillColor">
+                        <gradient
+                            android:endX="67"
+                            android:endY="66"
+                            android:startX="48"
+                            android:startY="42"
+                            android:type="linear">
+                            <item
+                                android:color="#FFF3D98B"
+                                android:offset="0.0" />
+                            <item
+                                android:color="#FFD4A651"
+                                android:offset="1.0" />
+                        </gradient>
+                    </aapt:attr>
+                </path>
+            </group>
+        </vector>
+    </aapt:attr>
+
+    <target android:name="ring">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="650"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="trimPathEnd"
+                android:valueFrom="0"
+                android:valueTo="1"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+    <target android:name="playhead">
+        <aapt:attr name="android:animation">
+            <objectAnimator
+                android:duration="650"
+                android:interpolator="@android:interpolator/fast_out_slow_in"
+                android:propertyName="rotation"
+                android:valueFrom="-300"
+                android:valueTo="0"
+                android:valueType="floatType" />
+        </aapt:attr>
+    </target>
+    <target android:name="play">
+        <aapt:attr name="android:animation">
+            <set android:ordering="together">
+                <objectAnimator
+                    android:duration="350"
+                    android:interpolator="@android:interpolator/overshoot"
+                    android:propertyName="scaleX"
+                    android:startOffset="350"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+                <objectAnimator
+                    android:duration="350"
+                    android:interpolator="@android:interpolator/overshoot"
+                    android:propertyName="scaleY"
+                    android:startOffset="350"
+                    android:valueFrom="0"
+                    android:valueTo="1"
+                    android:valueType="floatType" />
+            </set>
+        </aapt:attr>
+    </target>
+</animated-vector>

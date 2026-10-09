@@ -21,6 +21,7 @@ import androidx.navigation.NavDestination.Companion.hasRoute
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.nameisjayant.androidpractice.media.navigation.MediaBottomBar
+import com.nameisjayant.androidpractice.media.navigation.MediaMotion
 import com.nameisjayant.androidpractice.media.navigation.MediaNavHost
 import com.nameisjayant.androidpractice.media.navigation.MediaRoute
 import com.nameisjayant.androidpractice.media.ui.MediaTheme
@@ -48,8 +49,8 @@ class MainActivity : ComponentActivity() {
                         // The player is full-bleed, so the tab bar steps aside while it's open.
                         AnimatedVisibility(
                             visible = currentDestination?.hasRoute<MediaRoute.VideoPlayer>() != true,
-                            enter = fadeIn() + slideInVertically { it },
-                            exit = fadeOut() + slideOutVertically { it },
+                            enter = fadeIn(MediaMotion.enterSpec()) + slideInVertically(MediaMotion.enterSpec()) { it },
+                            exit = fadeOut(MediaMotion.exitSpec()) + slideOutVertically(MediaMotion.exitSpec()) { it },
                         ) {
                             MediaBottomBar(navController, currentDestination)
                         }

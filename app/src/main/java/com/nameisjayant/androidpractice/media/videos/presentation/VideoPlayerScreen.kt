@@ -70,6 +70,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.compose.ContentFrame
+import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
 import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
 import com.nameisjayant.androidpractice.R
 import com.nameisjayant.androidpractice.media.ui.MediaColors
@@ -194,6 +195,8 @@ private fun VideoSurface(
     ) {
         ContentFrame(
             player = player,
+            // TextureView moves with the slide-up/down transition; a SurfaceView lags a frame behind.
+            surfaceType = SURFACE_TYPE_TEXTURE_VIEW,
             contentScale = ContentScale.Fit,
             shutter = { Box(Modifier.fillMaxSize().background(Color.Black)) },
             modifier = Modifier.fillMaxSize(),

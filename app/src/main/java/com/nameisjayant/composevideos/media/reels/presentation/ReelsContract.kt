@@ -14,8 +14,11 @@ data class ReelsState(
     val autoScroll: Boolean = false,
     val error: String? = null,
     val likedReelIds: Set<String> = emptySet(),
+    val likedCommentIds: Set<String> = emptySet(),
     /** Reel whose comments sheet is open, or null when it's closed. */
     val commentsReelId: String? = null,
+    /** Reel whose ⋮ options sheet is open, or null when it's closed. */
+    val optionsReelId: String? = null,
     /** What a finger held on the video is doing, or null when nothing's held. */
     val hold: ReelHold? = null,
 )
@@ -28,6 +31,17 @@ const val HoldSpeed = 2f
 
 /** Speeds the speed button steps through, wrapping back to the first. */
 val PlaybackSpeeds = listOf(1f, 1.5f, 2f, 0.5f)
+
+/** Reasons offered when reporting a reel, in Instagram's order. */
+val ReportReasons = listOf(
+    "Spam",
+    "Nudity or sexual activity",
+    "Hate speech or symbols",
+    "Violence or dangerous organisations",
+    "Bullying or harassment",
+    "False information",
+    "Something else",
+)
 
 /** Everything the user (or the player) can tell the screen. */
 sealed interface ReelsIntent {
@@ -45,12 +59,29 @@ sealed interface ReelsIntent {
     data class DoubleTapLike(val reelId: String) : ReelsIntent
     data class OpenComments(val reelId: String) : ReelsIntent
     data object CloseComments : ReelsIntent
-    data class PostComment(val reelId: String, val text: String) : ReelsIntent
+    /** [parentId] makes it a reply in that comment's thread. */
+    data class PostComment(val reelId: String, val text: String, val parentId: String? = null) : ReelsIntent
+    data class ToggleCommentLike(val commentId: String) : ReelsIntent
+    /** Only the user's own comments can be deleted; a top-level one takes its replies with it. */
+    data class DeleteComment(val reelId: String, val commentId: String) : ReelsIntent
+    data class OpenOptions(val reelId: String) : ReelsIntent
+    data object CloseOptions : ReelsIntent
+    /** Drops the reel from the feed, with an undo. */
+    data class NotInterested(val reelId: String) : ReelsIntent
+    /** Drops the reel from the feed for good. */
+    data class Report(val reelId: String, val reason: String) : ReelsIntent
+    /** Puts back the reel the last [NotInterested] removed. */
+    data object UndoNotInterested : ReelsIntent
     data class Share(val reelId: String) : ReelsIntent
 }
 
 /** One-off events that shouldn't survive recomposition or rotation. */
 sealed interface ReelsEffect {
-    data class ShowMessage(val message: String) : ReelsEffect
+    /** [action] is sent back as an intent if the snackbar's [actionLabel] is tapped. */
+    data class ShowMessage(
+        val message: String,
+        val actionLabel: String? = null,
+        val action: ReelsIntent? = null,
+    ) : ReelsEffect
     data class ShareReel(val text: String) : ReelsEffect
 }

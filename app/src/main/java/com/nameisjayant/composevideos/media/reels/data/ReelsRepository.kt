@@ -53,16 +53,44 @@ internal object BundledReels {
         "orbit.cuts" to "That transition at the end 🔥",
         "maya.sketch" to "Open movies deserve way more love",
     )
+    private val sampleReplies = listOf(
+        "kiri" to "Same, can't stop rewatching",
+        "dev_tomas" to "All of it, even the hair sim",
+        "anya.frames" to "Agreed!",
+    )
     private val ages = listOf("2h", "5h", "1d", "3d", "1w")
 
     val all = reels.mapIndexed { i, reel ->
+        val comments = List(2 + i % 4) { c ->
+            val (author, text) = sampleComments[(i + c) % sampleComments.size]
+            ReelComment(
+                id = "${reel.id}_c$c",
+                author = author,
+                text = text,
+                postedAgo = ages[(i + c) % ages.size],
+                likeCount = (i * 37 + c * 211) % 900,
+                // Every other comment gets a reply so threads show up across the feed.
+                replies = if ((i + c) % 2 == 0) {
+                    val (replyAuthor, replyText) = sampleReplies[(i + c) % sampleReplies.size]
+                    listOf(ReelComment("${reel.id}_c${c}_r0", replyAuthor, replyText, "1h", likeCount = c * 3))
+                } else {
+                    emptyList()
+                },
+            )
+        }
+        // The creator pins a credit on every other reel.
+        val pinned = ReelComment(
+            id = "${reel.id}_pinned",
+            author = BLENDER.replace(" ", "").lowercase(),
+            text = "Every Blender open movie is free to watch and remix. Full film on our site!",
+            postedAgo = "1w",
+            likeCount = 2_400 + i * 97,
+            isPinned = true,
+        )
         reel.copy(
             likeCount = 1_200 + (i * 7_919) % 48_000,
             shareCount = 40 + (i * 613) % 2_400,
-            comments = List(2 + i % 4) { c ->
-                val (author, text) = sampleComments[(i + c) % sampleComments.size]
-                ReelComment("${reel.id}_c$c", author, text, ages[(i + c) % ages.size])
-            },
+            comments = if (i % 2 == 0) listOf(pinned) + comments else comments,
         )
     }
 }

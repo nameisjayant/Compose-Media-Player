@@ -1,6 +1,8 @@
 package com.nameisjayant.composevideos.media.reels
 
 import com.nameisjayant.composevideos.media.reels.data.Reel
+import com.nameisjayant.composevideos.media.reels.data.ReelComment
+import com.nameisjayant.composevideos.media.reels.data.commentCount
 import com.nameisjayant.composevideos.media.reels.data.ReelsRepository
 import com.nameisjayant.composevideos.media.reels.presentation.ReelHold
 import com.nameisjayant.composevideos.media.reels.presentation.ReelsEffect
@@ -30,7 +32,10 @@ class ReelsViewModelTest {
 
     private val reels = listOf(
         Reel("a", "A", "Chan", videoRes = 0, likeCount = 10, shareCount = 3),
-        Reel("b", "B", "Chan", videoRes = 0),
+        Reel(
+            "b", "B", "Chan", videoRes = 0,
+            comments = listOf(ReelComment("b_c0", "kiri", "hi", "1h", likeCount = 2)),
+        ),
         Reel("c", "C", "Chan", videoRes = 0),
     )
 
@@ -140,7 +145,7 @@ class ReelsViewModelTest {
         vm.onIntent(ReelsIntent.PostComment("b", "   "))
         vm.onIntent(ReelsIntent.PostComment("b", "  nice  "))
         val comments = vm.state.value.reels.first { it.id == "b" }.comments
-        assertEquals(listOf("nice"), comments.map { it.text })
+        assertEquals(listOf("hi", "nice"), comments.map { it.text })
 
         vm.onIntent(ReelsIntent.CloseComments)
         assertNull(vm.state.value.commentsReelId)
@@ -152,5 +157,74 @@ class ReelsViewModelTest {
         vm.onIntent(ReelsIntent.Share("a"))
         assertEquals(4, vm.state.value.reels.first { it.id == "a" }.shareCount)
         assertTrue(vm.effects.first() is ReelsEffect.ShareReel)
+    }
+
+    @Test
+    fun `replies join the top-level thread, even when replying to a reply`() {
+        val vm = ReelsViewModel(FakeRepository { reels })
+        vm.onIntent(ReelsIntent.PostComment("b", "first", parentId = "b_c0"))
+        val replyId = vm.state.value.reels.first { it.id == "b" }.comments.single().replies.single().id
+        vm.onIntent(ReelsIntent.PostComment("b", "second", parentId = replyId))
+
+        val reel = vm.state.value.reels.first { it.id == "b" }
+        assertEquals(listOf("first", "second"), reel.comments.single().replies.map { it.text })
+        assertEquals(3, reel.commentCount)
+    }
+
+    @Test
+    fun `comment like toggles`() {
+        val vm = ReelsViewModel(FakeRepository { reels })
+        vm.onIntent(ReelsIntent.ToggleCommentLike("b_c0"))
+        assertTrue("b_c0" in vm.state.value.likedCommentIds)
+        vm.onIntent(ReelsIntent.ToggleCommentLike("b_c0"))
+        assertFalse("b_c0" in vm.state.value.likedCommentIds)
+    }
+
+    @Test
+    fun `only your own comments can be deleted`() {
+        val vm = ReelsViewModel(FakeRepository { reels })
+        vm.onIntent(ReelsIntent.DeleteComment("b", "b_c0"))
+        assertEquals(1, vm.state.value.reels.first { it.id == "b" }.comments.size)
+
+        vm.onIntent(ReelsIntent.PostComment("b", "mine"))
+        val mine = vm.state.value.reels.first { it.id == "b" }.comments.last()
+        vm.onIntent(ReelsIntent.PostComment("b", "reply to mine", parentId = mine.id))
+        vm.onIntent(ReelsIntent.ToggleCommentLike(mine.id))
+        vm.onIntent(ReelsIntent.DeleteComment("b", mine.id))
+
+        val reel = vm.state.value.reels.first { it.id == "b" }
+        assertEquals(listOf("b_c0"), reel.comments.map { it.id })
+        assertFalse(mine.id in vm.state.value.likedCommentIds)
+    }
+
+    @Test
+    fun `not interested hides the reel and undo puts it back`() = runTest {
+        val vm = ReelsViewModel(FakeRepository { reels })
+        vm.onIntent(ReelsIntent.PageSettled(1))
+        vm.onIntent(ReelsIntent.OpenOptions("b"))
+        vm.onIntent(ReelsIntent.NotInterested("b"))
+
+        assertEquals(listOf("a", "c"), vm.state.value.reels.map { it.id })
+        assertEquals(1, vm.state.value.currentIndex)
+        assertNull(vm.state.value.optionsReelId)
+        val effect = vm.effects.first() as ReelsEffect.ShowMessage
+        assertEquals(ReelsIntent.UndoNotInterested, effect.action)
+
+        vm.onIntent(ReelsIntent.UndoNotInterested)
+        assertEquals(listOf("a", "b", "c"), vm.state.value.reels.map { it.id })
+        assertEquals(1, vm.state.value.currentIndex)
+    }
+
+    @Test
+    fun `reported reels stay hidden across reloads`() {
+        val vm = ReelsViewModel(FakeRepository { reels })
+        vm.onIntent(ReelsIntent.PageSettled(2))
+        vm.onIntent(ReelsIntent.Report("c", "Spam"))
+        assertEquals(listOf("a", "b"), vm.state.value.reels.map { it.id })
+        assertEquals(1, vm.state.value.currentIndex)
+
+        vm.onIntent(ReelsIntent.UndoNotInterested)
+        vm.onIntent(ReelsIntent.LoadReels)
+        assertEquals(listOf("a", "b"), vm.state.value.reels.map { it.id })
     }
 }

@@ -43,7 +43,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -79,6 +81,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nameisjayant.composevideos.R
 import com.nameisjayant.composevideos.media.reels.data.Reel
+import com.nameisjayant.composevideos.media.reels.data.commentCount
 import com.nameisjayant.composevideos.media.ui.MediaColors
 import com.nameisjayant.composevideos.media.ui.MediaTheme
 import kotlinx.coroutines.launch
@@ -97,7 +100,15 @@ fun ReelsScreen(
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
             when (effect) {
-                is ReelsEffect.ShowMessage -> snackbarHostState.showSnackbar(effect.message)
+                is ReelsEffect.ShowMessage -> {
+                    val result = snackbarHostState.showSnackbar(
+                        message = effect.message,
+                        actionLabel = effect.actionLabel,
+                        // Leave time to reach Undo; plain notices go quickly.
+                        duration = if (effect.actionLabel != null) SnackbarDuration.Long else SnackbarDuration.Short,
+                    )
+                    if (result == SnackbarResult.ActionPerformed) effect.action?.let(viewModel::onIntent)
+                }
                 is ReelsEffect.ShareReel -> {
                     val send = Intent(Intent.ACTION_SEND)
                         .setType("text/plain")
@@ -141,9 +152,19 @@ fun ReelsContent(
                     .size(36.dp),
             )
 
-            state.error != null -> ReelsError(
+            state.error != null -> ReelsMessage(
+                title = "Something went quiet",
                 message = state.error,
-                onRetry = { onIntent(ReelsIntent.LoadReels) },
+                actionLabel = "Try again",
+                onAction = { onIntent(ReelsIntent.LoadReels) },
+                modifier = Modifier.align(Alignment.Center),
+            )
+
+            state.reels.isEmpty() -> ReelsMessage(
+                title = "You're all caught up",
+                message = "No more reels in your feed.",
+                actionLabel = "Refresh",
+                onAction = { onIntent(ReelsIntent.LoadReels) },
                 modifier = Modifier.align(Alignment.Center),
             )
 
@@ -183,8 +204,20 @@ fun ReelsContent(
     if (commentsReel != null) {
         ReelCommentsSheet(
             reel = commentsReel,
-            onPost = { onIntent(ReelsIntent.PostComment(commentsReel.id, it)) },
+            likedCommentIds = state.likedCommentIds,
+            onPost = { text, parentId -> onIntent(ReelsIntent.PostComment(commentsReel.id, text, parentId)) },
+            onToggleLike = { onIntent(ReelsIntent.ToggleCommentLike(it)) },
+            onDelete = { onIntent(ReelsIntent.DeleteComment(commentsReel.id, it)) },
             onDismiss = { onIntent(ReelsIntent.CloseComments) },
+        )
+    }
+
+    val optionsReel = state.reels.firstOrNull { it.id == state.optionsReelId }
+    if (optionsReel != null) {
+        ReelOptionsSheet(
+            onNotInterested = { onIntent(ReelsIntent.NotInterested(optionsReel.id)) },
+            onReport = { reason -> onIntent(ReelsIntent.Report(optionsReel.id, reason)) },
+            onDismiss = { onIntent(ReelsIntent.CloseOptions) },
         )
     }
 }
@@ -280,6 +313,12 @@ private fun ReelsPager(
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { onIntent(ReelsIntent.PageSettled(it)) }
     }
+    // Removing or restoring a reel shifts the pages; the pager would follow the neighbour by key,
+    // so put it back on the page the ViewModel chose (the restored reel after an Undo). Unconditional:
+    // this can run before the pager re-anchors, when currentPage still looks right.
+    LaunchedEffect(pagerState, state.reels.size) {
+        pagerState.scrollToPage(state.currentIndex)
+    }
     // Warm the reels ahead only once a swipe settles, keeping player setup off the swipe itself.
     LaunchedEffect(pagerState, playerPool, state.reels) {
         snapshotFlow { pagerState.settledPage }.collect { page ->
@@ -312,8 +351,9 @@ private fun ReelsPager(
             isMuted = state.isMuted,
             speed = state.playbackSpeed,
             // With auto-scroll on a reel plays once, unless there's nowhere to go: the last reel,
-            // or an open comments sheet the next reel would slide out from under.
-            loop = !state.autoScroll || page == state.reels.lastIndex || state.commentsReelId != null,
+            // or an open sheet the next reel would slide out from under.
+            loop = !state.autoScroll || page == state.reels.lastIndex ||
+                state.commentsReelId != null || state.optionsReelId != null,
             autoScroll = state.autoScroll,
             isLiked = reel.id in state.likedReelIds,
             onTogglePlay = { onIntent(ReelsIntent.TogglePlayPause) },
@@ -323,6 +363,7 @@ private fun ReelsPager(
             onDoubleTapLike = { onIntent(ReelsIntent.DoubleTapLike(reel.id)) },
             onOpenComments = { onIntent(ReelsIntent.OpenComments(reel.id)) },
             onShare = { onIntent(ReelsIntent.Share(reel.id)) },
+            onOpenOptions = { onIntent(ReelsIntent.OpenOptions(reel.id)) },
             onToggleMute = { onIntent(ReelsIntent.ToggleMute) },
             onCycleSpeed = { onIntent(ReelsIntent.CycleSpeed) },
             onToggleAutoScroll = { onIntent(ReelsIntent.ToggleAutoScroll) },
@@ -354,6 +395,7 @@ private fun ReelItem(
     onDoubleTapLike: () -> Unit,
     onOpenComments: () -> Unit,
     onShare: () -> Unit,
+    onOpenOptions: () -> Unit,
     onToggleMute: () -> Unit,
     onCycleSpeed: () -> Unit,
     onToggleAutoScroll: () -> Unit,
@@ -484,6 +526,7 @@ private fun ReelItem(
                 onToggleLike = onToggleLike,
                 onOpenComments = onOpenComments,
                 onShare = onShare,
+                onOpenOptions = onOpenOptions,
                 // Read lazily so per-frame progress only redraws the bar, not the whole reel.
                 progress = { if (isCurrent) progress else 0f },
                 isScrubbing = isScrubbing,
@@ -530,6 +573,7 @@ private fun ReelInfo(
     onToggleLike: () -> Unit,
     onOpenComments: () -> Unit,
     onShare: () -> Unit,
+    onOpenOptions: () -> Unit,
     progress: () -> Float,
     isScrubbing: Boolean,
     onScrubStart: () -> Unit,
@@ -581,7 +625,7 @@ private fun ReelInfo(
                 )
                 ReelAction(
                     icon = R.drawable.ic_comment,
-                    label = formatCount(reel.comments.size),
+                    label = formatCount(reel.commentCount),
                     contentDescription = "Comments",
                     onClick = onOpenComments,
                 )
@@ -590,6 +634,17 @@ private fun ReelInfo(
                     label = formatCount(reel.shareCount),
                     contentDescription = "Share",
                     onClick = onShare,
+                )
+                // Instagram keeps its overflow menu on the rail too, without a count.
+                Icon(
+                    painter = painterResource(R.drawable.ic_more_vert),
+                    contentDescription = "More options",
+                    tint = Color.White,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable(onClickLabel = "More options", onClick = onOpenOptions)
+                        .padding(6.dp)
+                        .size(24.dp),
                 )
                 Spacer(Modifier.height(4.dp))
                 SpeedButton(speed = speed, onClick = onCycleSpeed)
@@ -661,7 +716,7 @@ private fun ChannelRow(channel: String) {
 }
 
 /** Instagram's like red. */
-private val LikeRed = Color(0xFFFF3040)
+internal val LikeRed = Color(0xFFFF3040)
 
 /** Icon over its count, no background, like Instagram's right rail. */
 @Composable
@@ -756,7 +811,7 @@ private fun HeartBurst(at: Offset, key: Int) {
 }
 
 /** 950 → "950", 12_400 → "12.4K", 3_100_000 → "3.1M". */
-private fun formatCount(n: Int): String = when {
+internal fun formatCount(n: Int): String = when {
     n >= 1_000_000 -> trimDecimal(n / 1_000_000f) + "M"
     n >= 10_000 -> (n / 1_000).toString() + "K"
     n >= 1_000 -> trimDecimal(n / 1_000f) + "K"
@@ -826,10 +881,13 @@ private fun SpeedButton(speed: Float, onClick: () -> Unit) {
     }
 }
 
+/** Centred notice with one action: load errors and an emptied feed. */
 @Composable
-private fun ReelsError(
+private fun ReelsMessage(
+    title: String,
     message: String,
-    onRetry: () -> Unit,
+    actionLabel: String,
+    onAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -852,7 +910,7 @@ private fun ReelsError(
             )
         }
         Spacer(Modifier.height(20.dp))
-        Text("Something went quiet", color = Color.White, style = MaterialTheme.typography.titleLarge)
+        Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(6.dp))
         Text(
             text = message,
@@ -862,11 +920,11 @@ private fun ReelsError(
         )
         Spacer(Modifier.height(24.dp))
         OutlinedButton(
-            onClick = onRetry,
+            onClick = onAction,
             border = BorderStroke(1.dp, MediaColors.Accent.copy(alpha = 0.6f)),
             contentPadding = PaddingValues(horizontal = 28.dp, vertical = 12.dp),
         ) {
-            Text("Try again", color = MediaColors.Accent, style = MaterialTheme.typography.labelLarge)
+            Text(actionLabel, color = MediaColors.Accent, style = MaterialTheme.typography.labelLarge)
         }
     }
 }

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -50,12 +51,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import com.nameisjayant.composevideos.R
 import com.nameisjayant.composevideos.media.ui.MediaColors
+import com.nameisjayant.composevideos.media.videos.data.Chapter
+import com.nameisjayant.composevideos.media.videos.data.chapterAt
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -233,7 +237,7 @@ internal fun Modifier.swipeToAdjust(enabled: Boolean, state: SwipeAdjustState): 
 
 /** The brightness or volume level, or the seek target, in the middle of the video while swiping. */
 @Composable
-internal fun BoxScope.SwipeAdjustFeedback(state: SwipeAdjustState) {
+internal fun BoxScope.SwipeAdjustFeedback(state: SwipeAdjustState, chapters: List<Chapter>) {
     // Remembered so the pill doesn't change shape mid fade-out after the swipe ends.
     var shownKind by remember { mutableStateOf(SwipeKind.Brightness) }
     state.kind?.let { shownKind = it }
@@ -249,6 +253,7 @@ internal fun BoxScope.SwipeAdjustFeedback(state: SwipeAdjustState) {
                 target = state.seekTarget,
                 delta = state.seekTarget - state.seekStart,
                 duration = state.duration,
+                chapter = chapters.chapterAt(state.seekTarget)?.title,
             )
         } else {
             LevelPill(kind = shownKind, level = state.level)
@@ -300,7 +305,7 @@ private fun LevelPill(kind: SwipeKind, level: Float) {
 }
 
 @Composable
-private fun SeekPill(target: Long, delta: Long, duration: Long) {
+private fun SeekPill(target: Long, delta: Long, duration: Long, chapter: String?) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -320,6 +325,16 @@ private fun SeekPill(target: Long, delta: Long, duration: Long) {
             color = Color.White,
             style = MaterialTheme.typography.labelMedium,
         )
+        if (chapter != null) {
+            Text(
+                text = chapter,
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 200.dp),
+            )
+        }
     }
 }
 

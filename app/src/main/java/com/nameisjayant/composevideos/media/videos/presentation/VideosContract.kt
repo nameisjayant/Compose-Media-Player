@@ -52,4 +52,6 @@ sealed interface VideoPlayerIntent {
     data class SetAutoplay(val enabled: Boolean) : VideoPlayerIntent
     /** Stops the end-of-video countdown, leaving the video on its last frame; autoplay stays on. */
     data object CancelAutoplay : VideoPlayerIntent
+    /** Jumps to [positionMs] and plays from there, e.g. from a timestamp in the description. */
+    data class SeekTo(val positionMs: Long) : VideoPlayerIntent
 }

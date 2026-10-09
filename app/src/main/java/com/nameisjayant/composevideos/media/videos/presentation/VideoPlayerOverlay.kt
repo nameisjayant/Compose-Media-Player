@@ -46,11 +46,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -100,6 +100,7 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -123,7 +124,9 @@ import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
 import com.nameisjayant.composevideos.R
 import com.nameisjayant.composevideos.media.navigation.MediaMotion
 import com.nameisjayant.composevideos.media.ui.MediaColors
+import com.nameisjayant.composevideos.media.videos.data.Chapter
 import com.nameisjayant.composevideos.media.videos.data.Video
+import com.nameisjayant.composevideos.media.videos.data.chapterAt
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -379,6 +382,7 @@ fun VideoPlayerOverlay(
                     autoplay = state.autoplay,
                     onAutoplayChange = { viewModel.onIntent(VideoPlayerIntent.SetAutoplay(it)) },
                     onPlay = { viewModel.onIntent(VideoPlayerIntent.Open(it.id)) },
+                    onSeekTo = { viewModel.onIntent(VideoPlayerIntent.SeekTo(it)) },
                     modifier = Modifier
                         .padding(top = with(density) { geometry.expanded.bottom.toDp() })
                         .graphicsLayer {
@@ -731,6 +735,7 @@ private fun VideoSurface(
     BackHandler(enabled = isLocked && showChrome) { showUnlockHint() }
 
     val haptics = LocalHapticFeedback.current
+    val chapters = state.video?.chapters.orEmpty()
     val seekFeedback = remember { SeekFeedbackState() }
     val canSeek by rememberUpdatedState(state.error == null && !state.isLoading)
     val toggleControls = { controlsVisible = !controlsVisible }
@@ -831,6 +836,7 @@ private fun VideoSurface(
                 Box(Modifier.fillMaxSize()) {
                     PlayerControls(
                         player = player,
+                        chapters = chapters,
                         showPlay = playPause.showPlay,
                         isEnded = playbackState == Player.STATE_ENDED,
                         playPauseEnabled = playPause.isEnabled,
@@ -846,7 +852,7 @@ private fun VideoSurface(
         }
 
         if (showChrome && !isLocked) SeekFeedback(seekFeedback)
-        if (isFullScreen && showChrome && !isLocked) SwipeAdjustFeedback(swipe)
+        if (isFullScreen && showChrome && !isLocked) SwipeAdjustFeedback(swipe, chapters)
 
         // Over the replay controls; cancelling it leaves them to replay. A locked screen still
         // counts down, it just can't be tapped.
@@ -983,6 +989,7 @@ private fun UnlockButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
 @Composable
 private fun BoxScope.PlayerControls(
     player: Player,
+    chapters: List<Chapter>,
     showPlay: Boolean,
     isEnded: Boolean,
     playPauseEnabled: Boolean,
@@ -1027,6 +1034,7 @@ private fun BoxScope.PlayerControls(
 
     SeekBar(
         player = player,
+        chapters = chapters,
         onSeek = onSeek,
         modifier = Modifier
             .align(Alignment.BottomCenter)
@@ -1036,9 +1044,16 @@ private fun BoxScope.PlayerControls(
     )
 }
 
+/**
+ * Times either side of a slider whose track breaks at each chapter, with the chapter under the
+ * thumb named above it. Dragging into another chapter ticks.
+ */
+// The androidx OptIn imported above doesn't cover Kotlin opt-in markers like this one.
+@kotlin.OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SeekBar(
     player: Player,
+    chapters: List<Chapter>,
     onSeek: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1047,6 +1062,7 @@ private fun SeekBar(
     // Non-null while the thumb is being dragged, so playback ticks don't fight the finger.
     var dragFraction by remember { mutableStateOf<Float?>(null) }
     val currentOnSeek by rememberUpdatedState(onSeek)
+    val haptics = LocalHapticFeedback.current
 
     LaunchedEffect(player) {
         while (true) {
@@ -1058,42 +1074,67 @@ private fun SeekBar(
 
     val fraction = dragFraction ?: if (duration > 0) (position.toFloat() / duration).coerceIn(0f, 1f) else 0f
     val shownPosition = dragFraction?.let { (it * duration).toLong() } ?: position
+    // Placed once the length is known; a chapter past the end is left off.
+    val chapterStarts = remember(chapters, duration) {
+        if (duration > 0) chapters.map { it.startMs.toFloat() / duration }.filter { it < 1f } else emptyList()
+    }
+    val chapter = chapters.takeIf { duration > 0 }?.chapterAt(shownPosition)
+    val isDragging = dragFraction != null
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier,
-    ) {
-        Text(
-            text = formatTime(shownPosition),
-            color = Color.White,
-            style = MaterialTheme.typography.labelMedium,
-        )
-        Slider(
-            value = fraction,
-            onValueChange = {
-                dragFraction = it
-                currentOnSeek()
-            },
-            onValueChangeFinished = {
-                dragFraction?.let { player.seekTo((it * duration).toLong()) }
-                position = player.currentPosition
-                dragFraction = null
-            },
-            enabled = duration > 0,
-            colors = SliderDefaults.colors(
-                thumbColor = MediaColors.Accent,
-                activeTrackColor = MediaColors.Accent,
-                inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-            ),
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 12.dp),
-        )
-        Text(
-            text = formatTime(duration),
-            color = Color.White.copy(alpha = 0.8f),
-            style = MaterialTheme.typography.labelMedium,
-        )
+    Column(modifier = modifier) {
+        if (chapter != null) {
+            Text(
+                text = chapter.title,
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .padding(top = 8.dp)
+                    .semantics { contentDescription = "Chapter: ${chapter.title}" },
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = formatTime(shownPosition),
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Slider(
+                value = fraction,
+                onValueChange = {
+                    val from = chapters.chapterAt(shownPosition)
+                    dragFraction = it
+                    if (chapters.chapterAt((it * duration).toLong()) != from) {
+                        haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    }
+                    currentOnSeek()
+                },
+                onValueChangeFinished = {
+                    dragFraction?.let { player.seekTo((it * duration).toLong()) }
+                    position = player.currentPosition
+                    dragFraction = null
+                },
+                enabled = duration > 0,
+                thumb = { SeekThumb(isDragging = isDragging, enabled = duration > 0) },
+                track = { sliderState ->
+                    ChapterTrack(
+                        fraction = sliderState.value,
+                        chapterStarts = chapterStarts,
+                        isDragging = isDragging,
+                        enabled = duration > 0,
+                    )
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+            )
+            Text(
+                text = formatTime(duration),
+                color = Color.White.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
     }
 }
 
@@ -1220,7 +1261,10 @@ private fun UpNextCountdown(
     }
 }
 
-/** Title, credit and description under the player in portrait, then the queue of what plays next. */
+/**
+ * Title, credit and description under the player in portrait, then the queue of what plays next.
+ * Times in the description jump the player there.
+ */
 @Composable
 private fun VideoDetails(
     video: Video,
@@ -1228,6 +1272,7 @@ private fun VideoDetails(
     autoplay: Boolean,
     onAutoplayChange: (Boolean) -> Unit,
     onPlay: (Video) -> Unit,
+    onSeekTo: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1288,11 +1333,7 @@ private fun VideoDetails(
                 color = MediaColors.Accent,
                 style = MaterialTheme.typography.labelSmall,
             )
-            Text(
-                text = video.description,
-                color = MediaColors.OnCanvas,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            DescriptionText(description = video.description, onSeekTo = onSeekTo)
         }
 
         if (upNext.isNotEmpty()) {

@@ -66,6 +66,7 @@
 | **Quality & speed menu** | A ⚙️ button in the player (portrait and full screen) opens a two-level menu that slides up from the bottom. **Quality** lists the video tracks the clip offers — **Auto (720p)**, **720p**, **480p**, **360p** — read live from `player.currentTracks` and applied as a `TrackSelectionParameters` max-video-size cap, so the choice carries over to the next video. **Playback speed** offers YouTube's **0.25× – 2×** steps. Both survive closing the player, rotation and process death; Back or a tap outside closes the menu. |
 | **Screen lock** | A 🔒 button in the full-screen player (landscape) locks out every touch so a stray palm can't pause, seek, open the menu or swipe the player away. Back is blocked too. Tapping the screen (or pressing Back) shows a **Screen locked · Tap to unlock** pill for 2.5 s; tap it to get the controls back. The lock survives rotation within full screen and process death, and lets go when you rotate back to portrait, hit a playback error or close the player. TalkBack gets an *Unlock screen* action. |
 | **Swipe gestures (full screen)** | In the full-screen player, drag **up / down on the left third** to change **brightness** and **on the right third** to change **volume**. A pill in the middle shows the level as a bar and a percentage, with a haptic tick at 0% and 100%. **Drag sideways anywhere** to seek: one full width of the screen is 90 s, the pill shows **+0:25** with the target time, and the seek happens when you lift your finger. Vertical drags in the middle third still swipe the player down into the floating window. The brightness only applies to the full-screen player: it survives activity recreation but goes back to the system level in portrait, the floating window, PiP, or when the player closes. Volume is the system media volume, so the volume keys and the swipe stay in sync. Turned off while the screen is locked. |
+| **Chapters & timestamps** | Each video's description ends with YouTube-style chapter lines (`0:15 A bite of fruit`), placed on the clip's scene cuts. They're read the way YouTube reads them: lines that start with a time, the first at **0:00**, at least **three**, in order, each at least **10 s** long, or no chapters at all. Every time in the description is an **accent-coloured link** that jumps the player there and plays. The **seek bar** breaks into one segment per chapter with a small gap at each start; while you drag, the chapter under your finger swells, its **name shows above the bar**, and a haptic tick marks crossing into the next one. The full-screen swipe-to-seek pill names the target chapter too. |
 | **Up Next & autoplay** | Under the description, an **Up next** queue lists the rest of the videos in the order they'll play (wrapping round, like *next*), each with a thumbnail, duration and title; tap one to play it. An **Autoplay** switch sits in the queue header and survives process death. When a video ends with autoplay on, the next video's thumbnail fades in over the player with **Up next in 5**, a play button whose ring fills over the **5-second countdown**, and **Cancel**. Play starts it now; Cancel (or replaying / seeking) stops the countdown and brings the replay controls back. The floating window shows a small **Next in N** pill, and the countdown stops while the app is in the background and starts over when you return. |
 | **In-app floating window** | Drag the player down to shrink it into a **mini floating window** that keeps playing while you browse; drag it to any of the **four corners**, fling to dock, and tap to expand again. **Previous / next** buttons skip between videos without leaving the window. An **expand** button (top left) opens it back up to the full player. |
 | **Picture-in-Picture** | Leaving the app while a video plays continues it in a system **PiP window** with **previous, play/pause and next** actions — auto-enter on Android 12+, `onUserLeaveHint` on older versions. |
@@ -141,14 +142,15 @@ app/src/main/java/com/nameisjayant/composevideos/
     │   └── presentation/              # ReelsContract, ReelsViewModel, ReelsScreen,
     │                                  # ReelPlayer (pool), ReelScrubber, ReelComments, ReelOptions
     └── videos/
-        ├── data/                      # Video, VideosRepository
+        ├── data/                      # Video, Chapter (timestamp & chapter parsing), VideosRepository
         ├── di/VideosModule.kt
         └── presentation/              # VideosContract, VideosViewModel, VideosScreen,
                                        # VideoPlayerViewModel, VideoPlayerOverlay,
                                        # PlayerSheetState, VideoPictureInPicture,
                                        # VideoSeekGestures (double-tap seek + ripple),
                                        # VideoSwipeGestures (brightness / volume / seek swipes),
-                                       # VideoPlaybackSettings (quality & speed menu)
+                                       # VideoPlaybackSettings (quality & speed menu),
+                                       # VideoChapters (chapter seek track, linked description)
 ```
 
 ---
@@ -269,6 +271,7 @@ ViewModels are covered by JVM unit tests using fake repositories and `kotlinx-co
 
 - **`ReelsViewModelTest`** — loading & retry, page settling, hold gestures, mute, playback errors, like vs. double-tap, comments, replies, comment likes, deleting only your own comments, share, not interested / undo and report.
 - **`VideosViewModelTest`** — loading and error-retry.
+- **`ChaptersTest`** — chapter parsing and YouTube's rules (starts at 0:00, at least three, in order, 10 s minimum), timestamp links in running text, and the chapter at a given position.
 
 ```bash
 ./gradlew testBetaDebugUnitTest

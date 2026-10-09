@@ -100,6 +100,7 @@ class VideoPlayerViewModel @Inject constructor(
             is VideoPlayerIntent.SetQuality -> setQuality(intent.height)
             is VideoPlayerIntent.SetAutoplay -> setAutoplay(intent.enabled)
             VideoPlayerIntent.CancelAutoplay -> cancelCountdown()
+            is VideoPlayerIntent.SeekTo -> seekTo(intent.positionMs)
         }
     }
 
@@ -165,6 +166,15 @@ class VideoPlayerViewModel @Inject constructor(
                 autoplay = it.autoplay,
             )
         }
+    }
+
+    /** Leaving the end also calls off the up-next countdown, through the playback state listener. */
+    private fun seekTo(positionMs: Long) {
+        val state = _state.value
+        if (state.video == null || state.isLoading || state.error != null) return
+        val duration = player.duration
+        player.seekTo(if (duration == C.TIME_UNSET) positionMs.coerceAtLeast(0) else positionMs.coerceIn(0, duration))
+        player.play()
     }
 
     private fun setPlaybackSpeed(speed: Float) {

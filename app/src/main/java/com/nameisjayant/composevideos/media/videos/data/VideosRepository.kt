@@ -26,6 +26,7 @@ class VideosRepositoryImpl @Inject constructor(
 /**
  * One-minute 16:9 clips cut from Blender Foundation open movies, all licensed CC BY,
  * so the channel credit must stay visible. Sintel and Tears of Steel are letterboxed, as released.
+ * The descriptions end with chapter timestamps, placed on the clips' scene cuts.
  * Each file carries 720p, 480p and 360p video tracks over one audio track, for the quality menu.
  * - Big Buck Bunny (2008), from 1:15, © Blender Foundation | peach.blender.org
  * - Sintel (2010), from 1:30, © Blender Foundation | durian.blender.org
@@ -42,7 +43,11 @@ internal object BundledVideos {
             channel = BLENDER,
             description = "A big, good-natured rabbit just wants a peaceful morning in the meadow. " +
                 "Three mischievous rodents have other plans. Blender's cheerful open movie, " +
-                "made by the Peach team.",
+                "made by the Peach team.\n\n" +
+                "0:00 Morning in the meadow\n" +
+                "0:15 A bite of fruit\n" +
+                "0:25 The butterfly\n" +
+                "0:43 Behind the tree",
             duration = "1:00",
             meta = "2008 · CC BY · peach.blender.org",
             videoRes = R.raw.video_bbb,
@@ -53,7 +58,10 @@ internal object BundledVideos {
             title = "Sintel",
             channel = BLENDER,
             description = "A lone young woman crosses snow and stone in search of a baby dragon " +
-                "she once cared for. A fantasy short from Blender's Durian project.",
+                "she once cared for. A fantasy short from Blender's Durian project.\n\n" +
+                "0:00 Opening titles\n" +
+                "0:11 The shaman's hut\n" +
+                "0:43 A bowl of soup",
             duration = "1:00",
             meta = "2010 · CC BY · durian.blender.org",
             videoRes = R.raw.video_sintel,
@@ -64,7 +72,11 @@ internal object BundledVideos {
             title = "Tears of Steel",
             channel = BLENDER,
             description = "Sci-fi in a future Amsterdam, mixing live-action footage with " +
-                "computer-generated effects. Made by Blender's Mango team.",
+                "computer-generated effects. Made by Blender's Mango team.\n\n" +
+                "0:00 The hologram lab\n" +
+                "0:17 The brain experiment\n" +
+                "0:27 Over the rooftops\n" +
+                "0:42 Through the scope",
             duration = "1:00",
             meta = "2012 · CC BY · mango.blender.org",
             videoRes = R.raw.video_tos,
@@ -76,7 +88,11 @@ internal object BundledVideos {
             channel = BLENDER,
             description = "Two travellers wander through a huge, surreal machine that seems to " +
                 "change around them. The first open movie, by the Orange team with the " +
-                "Netherlands Media Art Institute.",
+                "Netherlands Media Art Institute.\n\n" +
+                "0:00 Into the machine\n" +
+                "0:11 On the platform\n" +
+                "0:30 The wires come alive\n" +
+                "0:43 Through the curtain",
             duration = "1:00",
             meta = "2006 · CC BY · orange.blender.org",
             videoRes = R.raw.video_ed,

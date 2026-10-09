@@ -5,7 +5,7 @@ import androidx.annotation.RawRes
 
 /**
  * A long-form video in the Videos tab, bundled in the APK as [videoRes] under `res/raw`, with a
- * still frame from it as [thumbnailRes].
+ * still frame from it as [thumbnailRes]. Lines of [description] starting with a time become [chapters].
  */
 data class Video(
     val id: String,
@@ -18,4 +18,7 @@ data class Video(
     val meta: String,
     @param:RawRes val videoRes: Int,
     @param:DrawableRes val thumbnailRes: Int,
-)
+) {
+    /** Read from the timestamps at the start of lines in [description], like YouTube. */
+    val chapters: List<Chapter> = parseChapters(description)
+}

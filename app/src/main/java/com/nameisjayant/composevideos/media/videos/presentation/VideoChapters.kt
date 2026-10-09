@@ -40,7 +40,8 @@ private val DraggedTrackHeight = 8.dp
 private val ChapterGap = 2.dp
 
 private val ThumbSize = 14.dp
-private val DraggedThumbSize = 18.dp
+/** Also the width the slider gives the thumb, so the track runs from half of it in at each end. */
+internal val DraggedThumbSize = 18.dp
 
 /**
  * The seek bar's track, split into one segment per chapter with a small gap at each start in

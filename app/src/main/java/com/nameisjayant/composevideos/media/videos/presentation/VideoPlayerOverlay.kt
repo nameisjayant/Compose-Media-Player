@@ -125,6 +125,7 @@ import com.nameisjayant.composevideos.R
 import com.nameisjayant.composevideos.media.navigation.MediaMotion
 import com.nameisjayant.composevideos.media.ui.MediaColors
 import com.nameisjayant.composevideos.media.videos.data.Chapter
+import com.nameisjayant.composevideos.media.videos.data.SeekPreviews
 import com.nameisjayant.composevideos.media.videos.data.Video
 import com.nameisjayant.composevideos.media.videos.data.chapterAt
 import kotlin.coroutines.cancellation.CancellationException
@@ -157,6 +158,10 @@ private val SettleSpec = spring<Float>(stiffness = Spring.StiffnessMediumLow)
 private val SnapSpec = spring<Offset>(stiffness = Spring.StiffnessMediumLow)
 
 private val TopScrim = Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent))
+/** Wide enough to make out the scene, small enough to fit over the portrait player's top bar. */
+private val PreviewWidth = 128.dp
+private val FullScreenPreviewWidth = 192.dp
+
 private val BottomScrim = Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f)))
 
 /**
@@ -179,6 +184,8 @@ fun VideoPlayerOverlay(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // Read only while scrubbing, so frames decoding in the background don't recompose the player.
+    val seekPreviews = viewModel.seekPreviews.collectAsStateWithLifecycle()
     val player = viewModel.player
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
@@ -431,6 +438,7 @@ fun VideoPlayerOverlay(
             VideoSurface(
                 player = player,
                 state = state,
+                seekPreviews = { seekPreviews.value },
                 isFullScreen = isLandscape,
                 showChrome = !isCollapsing && !isInPip,
                 isLocked = isLocked,
@@ -687,6 +695,7 @@ private fun MiniSkipButton(@DrawableRes icon: Int, contentDescription: String, o
 private fun VideoSurface(
     player: Player,
     state: VideoPlayerState,
+    seekPreviews: () -> SeekPreviews?,
     isFullScreen: Boolean,
     showChrome: Boolean,
     isLocked: Boolean,
@@ -844,6 +853,7 @@ private fun VideoSurface(
                     PlayerControls(
                         player = player,
                         chapters = chapters,
+                        seekPreviews = seekPreviews,
                         showPlay = playPause.showPlay,
                         isEnded = playbackState == Player.STATE_ENDED,
                         playPauseEnabled = playPause.isEnabled,
@@ -998,6 +1008,7 @@ private fun UnlockButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
 private fun BoxScope.PlayerControls(
     player: Player,
     chapters: List<Chapter>,
+    seekPreviews: () -> SeekPreviews?,
     showPlay: Boolean,
     isEnded: Boolean,
     playPauseEnabled: Boolean,
@@ -1044,6 +1055,7 @@ private fun BoxScope.PlayerControls(
     SeekBar(
         player = player,
         chapters = chapters,
+        seekPreviews = seekPreviews,
         onSeek = onSeek,
         isFullScreen = isFullScreen,
         onToggleFullScreen = onToggleFullScreen,
@@ -1057,7 +1069,8 @@ private fun BoxScope.PlayerControls(
 
 /**
  * Times either side of a slider whose track breaks at each chapter, with the chapter under the
- * thumb named above it, and the full-screen button at the end. Dragging into another chapter ticks.
+ * thumb named above it, and the full-screen button at the end. Dragging into another chapter ticks,
+ * and shows a frame from where the thumb is over it.
  */
 // The androidx OptIn imported above doesn't cover Kotlin opt-in markers like this one.
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
@@ -1065,6 +1078,7 @@ private fun BoxScope.PlayerControls(
 private fun SeekBar(
     player: Player,
     chapters: List<Chapter>,
+    seekPreviews: () -> SeekPreviews?,
     onSeek: () -> Unit,
     isFullScreen: Boolean,
     onToggleFullScreen: () -> Unit,
@@ -1113,35 +1127,46 @@ private fun SeekBar(
                 color = Color.White,
                 style = MaterialTheme.typography.labelMedium,
             )
-            Slider(
-                value = fraction,
-                onValueChange = {
-                    val from = chapters.chapterAt(shownPosition)
-                    dragFraction = it
-                    if (chapters.chapterAt((it * duration).toLong()) != from) {
-                        haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                    }
-                    currentOnSeek()
-                },
-                onValueChangeFinished = {
-                    dragFraction?.let { player.seekTo((it * duration).toLong()) }
-                    position = player.currentPosition
-                    dragFraction = null
-                },
-                enabled = duration > 0,
-                thumb = { SeekThumb(isDragging = isDragging, enabled = duration > 0) },
-                track = { sliderState ->
-                    ChapterTrack(
-                        fraction = sliderState.value,
-                        chapterStarts = chapterStarts,
-                        isDragging = isDragging,
-                        enabled = duration > 0,
-                    )
-                },
-                modifier = Modifier
+            // The preview is laid out over the slider alone, so it can centre on the thumb.
+            Box(
+                Modifier
                     .weight(1f)
                     .padding(horizontal = 12.dp),
-            )
+            ) {
+                Slider(
+                    value = fraction,
+                    onValueChange = {
+                        val from = chapters.chapterAt(shownPosition)
+                        dragFraction = it
+                        if (chapters.chapterAt((it * duration).toLong()) != from) {
+                            haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                        }
+                        currentOnSeek()
+                    },
+                    onValueChangeFinished = {
+                        dragFraction?.let { player.seekTo((it * duration).toLong()) }
+                        position = player.currentPosition
+                        dragFraction = null
+                    },
+                    enabled = duration > 0,
+                    thumb = { SeekThumb(isDragging = isDragging, enabled = duration > 0) },
+                    track = { sliderState ->
+                        ChapterTrack(
+                            fraction = sliderState.value,
+                            chapterStarts = chapterStarts,
+                            isDragging = isDragging,
+                            enabled = duration > 0,
+                        )
+                    },
+                )
+                SeekPreview(
+                    visible = isDragging,
+                    frame = seekPreviews()?.frameAt(shownPosition),
+                    time = formatTime(shownPosition),
+                    width = if (isFullScreen) FullScreenPreviewWidth else PreviewWidth,
+                    modifier = Modifier.overSliderThumb { fraction },
+                )
+            }
             Text(
                 text = formatTime(duration),
                 color = Color.White.copy(alpha = 0.8f),

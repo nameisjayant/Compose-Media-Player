@@ -12,6 +12,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.RawResourceDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import com.nameisjayant.composevideos.media.videos.data.SeekPreviewSource
+import com.nameisjayant.composevideos.media.videos.data.SeekPreviews
+import com.nameisjayant.composevideos.media.videos.data.Video
 import com.nameisjayant.composevideos.media.videos.data.VideosRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -38,11 +41,20 @@ internal const val AUTOPLAY_COUNTDOWN_SECONDS = 5
 class VideoPlayerViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val repository: VideosRepository,
+    private val seekPreviewSource: SeekPreviewSource,
     @ApplicationContext context: Context,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(VideoPlayerState())
     val state: StateFlow<VideoPlayerState> = _state.asStateFlow()
+
+    private val _seekPreviews = MutableStateFlow<SeekPreviews?>(null)
+
+    /**
+     * Frames of the open video for the seek bar to show while scrubbing, filling in as they decode;
+     * null until the first one has. Kept out of [state] so each new frame doesn't touch the rest.
+     */
+    val seekPreviews: StateFlow<SeekPreviews?> = _seekPreviews.asStateFlow()
 
     val player: Player = ExoPlayer.Builder(context)
         .setAudioAttributes(
@@ -65,6 +77,11 @@ class VideoPlayerViewModel @Inject constructor(
     private var loadJob: Job? = null
 
     private var countdownJob: Job? = null
+
+    private var previewJob: Job? = null
+
+    /** The video [seekPreviews] are (being) decoded from, so reloading the same one keeps them. */
+    private var previewVideoId: String? = null
 
     init {
         // Counts down to the next video when one ends; a replay or seek off the end calls it off.
@@ -154,6 +171,7 @@ class VideoPlayerViewModel @Inject constructor(
     private fun close() {
         loadJob?.cancel()
         cancelCountdown()
+        clearSeekPreviews()
         savedStateHandle.remove<String>(KEY_VIDEO_ID)
         player.pause()
         player.stop()
@@ -225,6 +243,8 @@ class VideoPlayerViewModel @Inject constructor(
     private fun loadVideo() {
         val videoId = _state.value.videoId ?: return
         loadJob?.cancel()
+        // Another video's frames would preview the wrong scenes.
+        if (previewVideoId != videoId) clearSeekPreviews()
         _state.update { it.copy(isLoading = true, error = null) }
         loadJob = viewModelScope.launch {
             try {
@@ -248,12 +268,35 @@ class VideoPlayerViewModel @Inject constructor(
                 // Also recovers from a playback error when retrying.
                 player.prepare()
                 _state.update { it.copy(isLoading = false, video = video, upNext = upNext) }
+                loadSeekPreviews(video)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _state.update { it.copy(isLoading = false, error = e.message ?: "Couldn't load this video") }
             }
         }
+    }
+
+    private fun loadSeekPreviews(video: Video) {
+        if (previewVideoId == video.id) return
+        clearSeekPreviews()
+        previewVideoId = video.id
+        previewJob = viewModelScope.launch {
+            try {
+                seekPreviewSource.previews(video).collect { _seekPreviews.value = it }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Only a nicety: scrubbing still works, just without the pictures.
+            }
+        }
+    }
+
+    private fun clearSeekPreviews() {
+        previewJob?.cancel()
+        previewJob = null
+        previewVideoId = null
+        _seekPreviews.value = null
     }
 
     override fun onCleared() {

@@ -10,6 +10,8 @@ data class ReelsState(
     val isPaused: Boolean = false,
     val isMuted: Boolean = false,
     val playbackSpeed: Float = 1f,
+    /** Move on to the next reel when the current one ends, instead of looping it. */
+    val autoScroll: Boolean = false,
     val error: String? = null,
     val likedReelIds: Set<String> = emptySet(),
     /** Reel whose comments sheet is open, or null when it's closed. */
@@ -34,6 +36,7 @@ sealed interface ReelsIntent {
     data object TogglePlayPause : ReelsIntent
     data object ToggleMute : ReelsIntent
     data object CycleSpeed : ReelsIntent
+    data object ToggleAutoScroll : ReelsIntent
     data class HoldStarted(val hold: ReelHold) : ReelsIntent
     data object HoldReleased : ReelsIntent
     data class PlaybackFailed(val reelId: String, val reason: String) : ReelsIntent

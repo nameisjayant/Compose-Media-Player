@@ -52,6 +52,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -258,6 +259,11 @@ private val InfoScrim = Brush.verticalGradient(
     0.45f to Color.Black.copy(alpha = 0.45f),
     1f to Color.Black.copy(alpha = 0.85f),
 )
+/** Same feel as a fling's snap, so an auto-scroll looks like a swipe. */
+private val PageSnapSpec = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = Spring.StiffnessMediumLow,
+)
 private val AvatarRing = Brush.linearGradient(listOf(MediaColors.Accent, MediaColors.AccentDeep))
 
 @Composable
@@ -268,6 +274,7 @@ private fun ReelsPager(
 ) {
     val pagerState = rememberPagerState(initialPage = state.currentIndex) { state.reels.size }
     val playerPool = rememberReelPlayerPool()
+    val scope = rememberCoroutineScope()
 
     // Report only fully settled pages, so a reel starts once the swipe finishes (like Instagram).
     LaunchedEffect(pagerState) {
@@ -288,10 +295,7 @@ private fun ReelsPager(
         flingBehavior = PagerDefaults.flingBehavior(
             state = pagerState,
             pagerSnapDistance = PagerSnapDistance.atMost(1),
-            snapAnimationSpec = spring(
-                dampingRatio = Spring.DampingRatioNoBouncy,
-                stiffness = Spring.StiffnessMediumLow,
-            ),
+            snapAnimationSpec = PageSnapSpec,
             snapPositionalThreshold = SNAP_THRESHOLD,
         ),
         key = { state.reels[it].id },
@@ -307,6 +311,10 @@ private fun ReelsPager(
             hold = if (isCurrent) state.hold else null,
             isMuted = state.isMuted,
             speed = state.playbackSpeed,
+            // With auto-scroll on a reel plays once, unless there's nowhere to go: the last reel,
+            // or an open comments sheet the next reel would slide out from under.
+            loop = !state.autoScroll || page == state.reels.lastIndex || state.commentsReelId != null,
+            autoScroll = state.autoScroll,
             isLiked = reel.id in state.likedReelIds,
             onTogglePlay = { onIntent(ReelsIntent.TogglePlayPause) },
             onHoldStart = { onIntent(ReelsIntent.HoldStarted(it)) },
@@ -317,6 +325,10 @@ private fun ReelsPager(
             onShare = { onIntent(ReelsIntent.Share(reel.id)) },
             onToggleMute = { onIntent(ReelsIntent.ToggleMute) },
             onCycleSpeed = { onIntent(ReelsIntent.CycleSpeed) },
+            onToggleAutoScroll = { onIntent(ReelsIntent.ToggleAutoScroll) },
+            onEnded = {
+                if (isCurrent) scope.launch { pagerState.animateScrollToPage(page + 1, animationSpec = PageSnapSpec) }
+            },
             onPlaybackError = { reason -> onIntent(ReelsIntent.PlaybackFailed(reel.id, reason)) },
             contentPadding = contentPadding,
         )
@@ -332,6 +344,8 @@ private fun ReelItem(
     hold: ReelHold?,
     isMuted: Boolean,
     speed: Float,
+    loop: Boolean,
+    autoScroll: Boolean,
     isLiked: Boolean,
     onTogglePlay: () -> Unit,
     onHoldStart: (ReelHold) -> Unit,
@@ -342,6 +356,8 @@ private fun ReelItem(
     onShare: () -> Unit,
     onToggleMute: () -> Unit,
     onCycleSpeed: () -> Unit,
+    onToggleAutoScroll: () -> Unit,
+    onEnded: () -> Unit,
     onPlaybackError: (String) -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -371,10 +387,12 @@ private fun ReelItem(
             },
             isMuted = isMuted,
             speed = if (hold == ReelHold.FastForward) HoldSpeed else speed,
+            loop = loop,
             onPlaybackError = onPlaybackError,
             onProgress = { progress = it },
             seekTo = seekTarget,
             onSeeked = { seekTarget = null },
+            onEnded = onEnded,
         )
 
         // Transparent layer above the video: tap toggles play/pause, double-tap likes, and a hold
@@ -461,6 +479,7 @@ private fun ReelItem(
                 reel = reel,
                 isMuted = isMuted,
                 speed = speed,
+                autoScroll = autoScroll,
                 isLiked = isLiked,
                 onToggleLike = onToggleLike,
                 onOpenComments = onOpenComments,
@@ -479,6 +498,7 @@ private fun ReelItem(
                 },
                 onToggleMute = onToggleMute,
                 onCycleSpeed = onCycleSpeed,
+                onToggleAutoScroll = onToggleAutoScroll,
                 contentPadding = contentPadding,
             )
         }
@@ -505,6 +525,7 @@ private fun ReelInfo(
     reel: Reel,
     isMuted: Boolean,
     speed: Float,
+    autoScroll: Boolean,
     isLiked: Boolean,
     onToggleLike: () -> Unit,
     onOpenComments: () -> Unit,
@@ -515,6 +536,7 @@ private fun ReelInfo(
     onScrubEnd: (fraction: Float?) -> Unit,
     onToggleMute: () -> Unit,
     onCycleSpeed: () -> Unit,
+    onToggleAutoScroll: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -571,6 +593,13 @@ private fun ReelInfo(
                 )
                 Spacer(Modifier.height(4.dp))
                 SpeedButton(speed = speed, onClick = onCycleSpeed)
+                GlassIconButton(
+                    // Shows the current mode: looping the reel, or moving on to the next.
+                    icon = if (autoScroll) R.drawable.ic_auto_scroll else R.drawable.ic_replay,
+                    contentDescription = if (autoScroll) "Turn off auto-scroll" else "Turn on auto-scroll",
+                    onClick = onToggleAutoScroll,
+                    isActive = autoScroll,
+                )
                 GlassIconButton(
                     icon = if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_on,
                     contentDescription = if (isMuted) "Unmute" else "Mute",
@@ -742,20 +771,26 @@ private fun GlassIconButton(
     icon: Int,
     contentDescription: String,
     onClick: () -> Unit,
+    isActive: Boolean = false,
 ) {
+    // Active matches a non-default SpeedButton: champagne instead of white glass.
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.14f))
-            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+            .background(if (isActive) MediaColors.Accent.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.14f))
+            .border(
+                1.dp,
+                if (isActive) MediaColors.Accent.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.18f),
+                CircleShape,
+            )
             .clickable(onClick = onClick),
     ) {
         Icon(
             painter = painterResource(icon),
             contentDescription = contentDescription,
-            tint = Color.White,
+            tint = if (isActive) MediaColors.Accent else Color.White,
             modifier = Modifier.size(20.dp),
         )
     }

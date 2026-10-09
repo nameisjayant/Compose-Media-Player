@@ -45,6 +45,12 @@ class ReelsViewModel @Inject constructor(
                 val next = (PlaybackSpeeds.indexOf(it.playbackSpeed) + 1) % PlaybackSpeeds.size
                 it.copy(playbackSpeed = PlaybackSpeeds[next])
             }
+            ReelsIntent.ToggleAutoScroll -> {
+                _state.update { it.copy(autoScroll = !it.autoScroll) }
+                // The icon alone doesn't say what changed; spell it out.
+                val message = if (_state.value.autoScroll) "Auto-scroll on" else "Auto-scroll off, reels loop"
+                viewModelScope.launch { _effects.send(ReelsEffect.ShowMessage(message)) }
+            }
             is ReelsIntent.HoldStarted -> _state.update { it.copy(hold = intent.hold) }
             ReelsIntent.HoldReleased -> _state.update { it.copy(hold = null) }
             is ReelsIntent.PlaybackFailed -> viewModelScope.launch {

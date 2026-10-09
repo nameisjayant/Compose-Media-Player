@@ -111,10 +111,6 @@ class ReelPlayerPool(private val context: Context) {
                 /* handleAudioFocus = */ true,
             )
             .build()
-            .apply {
-                // Reels loop forever.
-                repeatMode = Player.REPEAT_MODE_ONE
-            }
 
     /** Returns its player to the pool when the page leaves composition. */
     inner class PlayerLease(val player: ExoPlayer) : RememberObserver {
@@ -145,11 +141,13 @@ fun ReelPlayer(
     shouldPlay: Boolean,
     isMuted: Boolean,
     speed: Float,
+    loop: Boolean,
     onPlaybackError: (reason: String) -> Unit,
     modifier: Modifier = Modifier,
     onProgress: (fraction: Float) -> Unit = {},
     seekTo: Float? = null,
     onSeeked: () -> Unit = {},
+    onEnded: () -> Unit = {},
 ) {
     val player = remember(pool, reel.id) { pool.lease(reel) }.player
 
@@ -158,11 +156,16 @@ fun ReelPlayer(
     val play = shouldPlay && lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     val currentOnError by rememberUpdatedState(onPlaybackError)
     val currentOnProgress by rememberUpdatedState(onProgress)
+    val currentOnEnded by rememberUpdatedState(onEnded)
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 currentOnError(error.errorCodeName)
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) currentOnEnded()
             }
         }
         player.addListener(listener)
@@ -176,7 +179,13 @@ fun ReelPlayer(
         if (duration > 0) player.seekTo((duration * seekTo).toLong())
         onSeeked()
     }
+    LaunchedEffect(player, loop) {
+        // Re-applied on every lease, since pooled players keep the last reel's mode.
+        player.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
+    }
     LaunchedEffect(player, play) {
+        // A reel that ended (auto-scroll) and is swiped back to starts over, like Instagram.
+        if (play && player.playbackState == Player.STATE_ENDED) player.seekTo(0)
         player.playWhenReady = play
         // Sample once per frame so the progress bar glides instead of stepping.
         while (play) {

@@ -202,6 +202,7 @@ fun VideoPlayerOverlay(
     val isLocked = lockRequested && isLandscape && !isInPip && !isMini
     // Picked by swiping the left edge in full screen; null follows the system brightness.
     var brightness by rememberSaveable { mutableStateOf<Float?>(null) }
+    val fullScreen = rememberFullScreenController()
 
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
     val topInset = WindowInsets.statusBars.getTop(density)
@@ -262,7 +263,10 @@ fun VideoPlayerOverlay(
         }
     }
 
-    // Registered after the handler above, so Back closes the settings menu first.
+    // In full screen, Back first turns the player back to portrait rather than closing it.
+    BackHandler(enabled = isLandscape && !isMini && !isInPip && !isLocked) { fullScreen.setFullScreen(false) }
+
+    // Registered after the handlers above, so Back closes the settings menu first.
     BackHandler(enabled = showSettings) { settingsOpen = false }
 
     // The menu doesn't follow the player into the floating window or picture-in-picture.
@@ -432,7 +436,9 @@ fun VideoPlayerOverlay(
                 isLocked = isLocked,
                 brightness = brightness,
                 onBrightnessChange = { brightness = it },
-                onBack = onClose,
+                // The back arrow does what Back does: portrait first, then close.
+                onBack = { if (isLandscape) fullScreen.setFullScreen(false) else onClose() },
+                onToggleFullScreen = { fullScreen.setFullScreen(!isLandscape) },
                 onOpenSettings = { settingsOpen = true },
                 onLockChange = {
                     lockRequested = it
@@ -687,6 +693,7 @@ private fun VideoSurface(
     brightness: Float?,
     onBrightnessChange: (Float) -> Unit,
     onBack: () -> Unit,
+    onToggleFullScreen: () -> Unit,
     onOpenSettings: () -> Unit,
     onLockChange: (Boolean) -> Unit,
     onRetry: () -> Unit,
@@ -845,6 +852,7 @@ private fun VideoSurface(
                             interactions++
                         },
                         onSeek = { interactions++ },
+                        onToggleFullScreen = onToggleFullScreen,
                         isFullScreen = isFullScreen,
                     )
                 }
@@ -995,6 +1003,7 @@ private fun BoxScope.PlayerControls(
     playPauseEnabled: Boolean,
     onPlayPause: () -> Unit,
     onSeek: () -> Unit,
+    onToggleFullScreen: () -> Unit,
     isFullScreen: Boolean,
 ) {
     // A soft dim behind the centre button so it reads on bright frames.
@@ -1036,6 +1045,8 @@ private fun BoxScope.PlayerControls(
         player = player,
         chapters = chapters,
         onSeek = onSeek,
+        isFullScreen = isFullScreen,
+        onToggleFullScreen = onToggleFullScreen,
         modifier = Modifier
             .align(Alignment.BottomCenter)
             .fillMaxWidth()
@@ -1046,7 +1057,7 @@ private fun BoxScope.PlayerControls(
 
 /**
  * Times either side of a slider whose track breaks at each chapter, with the chapter under the
- * thumb named above it. Dragging into another chapter ticks.
+ * thumb named above it, and the full-screen button at the end. Dragging into another chapter ticks.
  */
 // The androidx OptIn imported above doesn't cover Kotlin opt-in markers like this one.
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
@@ -1055,6 +1066,8 @@ private fun SeekBar(
     player: Player,
     chapters: List<Chapter>,
     onSeek: () -> Unit,
+    isFullScreen: Boolean,
+    onToggleFullScreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var position by remember { mutableLongStateOf(player.currentPosition) }
@@ -1134,6 +1147,18 @@ private fun SeekBar(
                 color = Color.White.copy(alpha = 0.8f),
                 style = MaterialTheme.typography.labelMedium,
             )
+            IconButton(
+                onClick = onToggleFullScreen,
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .size(40.dp),
+            ) {
+                Icon(
+                    painter = painterResource(if (isFullScreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen),
+                    contentDescription = if (isFullScreen) "Exit full screen" else "Full screen",
+                    tint = Color.White,
+                )
+            }
         }
     }
 }

@@ -1,0 +1,740 @@
+package com.nameisjayant.androidpractice.media.reels.presentation
+
+import android.content.Intent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerSnapDistance
+import androidx.compose.foundation.pager.VerticalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nameisjayant.androidpractice.R
+import com.nameisjayant.androidpractice.media.reels.data.Reel
+import com.nameisjayant.androidpractice.media.ui.MediaColors
+import com.nameisjayant.androidpractice.media.ui.MediaTheme
+import kotlinx.coroutines.launch
+
+/** Stateful entry point: wires the ViewModel's state and effects into [ReelsContent]. */
+@Composable
+fun ReelsScreen(
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(),
+    viewModel: ReelsViewModel = hiltViewModel(),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+
+    LaunchedEffect(viewModel) {
+        viewModel.effects.collect { effect ->
+            when (effect) {
+                is ReelsEffect.ShowMessage -> snackbarHostState.showSnackbar(effect.message)
+                is ReelsEffect.ShareReel -> {
+                    val send = Intent(Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(Intent.EXTRA_TEXT, effect.text)
+                    context.startActivity(Intent.createChooser(send, "Share reel"))
+                }
+            }
+        }
+    }
+
+    ReelsContent(
+        state = state,
+        onIntent = viewModel::onIntent,
+        snackbarHostState = snackbarHostState,
+        modifier = modifier,
+        contentPadding = contentPadding,
+    )
+}
+
+
+@Composable
+fun ReelsContent(
+    state: ReelsState,
+    onIntent: (ReelsIntent) -> Unit,
+    snackbarHostState: SnackbarHostState,
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(),
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black),
+    ) {
+        when {
+            state.isLoading -> CircularProgressIndicator(
+                color = MediaColors.Accent,
+                trackColor = Color.White.copy(alpha = 0.1f),
+                strokeWidth = 2.dp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(36.dp),
+            )
+
+            state.error != null -> ReelsError(
+                message = state.error,
+                onRetry = { onIntent(ReelsIntent.LoadReels) },
+                modifier = Modifier.align(Alignment.Center),
+            )
+
+            else -> ReelsPager(state = state, onIntent = onIntent, contentPadding = contentPadding)
+        }
+
+        ReelsHeader(
+            position = if (state.reels.isEmpty()) null else state.currentIndex + 1 to state.reels.size,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(contentPadding)
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+        ) { data ->
+            Snackbar(
+                snackbarData = data,
+                shape = RoundedCornerShape(16.dp),
+                containerColor = MediaColors.SurfaceRaised,
+                contentColor = MediaColors.OnCanvas,
+                actionColor = MediaColors.Accent,
+            )
+        }
+    }
+
+    val commentsReel = state.reels.firstOrNull { it.id == state.commentsReelId }
+    if (commentsReel != null) {
+        ReelCommentsSheet(
+            reel = commentsReel,
+            onPost = { onIntent(ReelsIntent.PostComment(commentsReel.id, it)) },
+            onDismiss = { onIntent(ReelsIntent.CloseComments) },
+        )
+    }
+}
+
+/** Title over a soft top scrim, so it stays legible on bright videos. */
+@Composable
+private fun ReelsHeader(
+    position: Pair<Int, Int>?,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .background(HeaderScrim)
+            .statusBarsPadding()
+            .padding(start = 20.dp, end = 16.dp, top = 10.dp, bottom = 28.dp),
+    ) {
+        Text(
+            text = "Reels",
+            color = Color.White,
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        Box(
+            Modifier
+                .padding(start = 6.dp)
+                .offset(y = 4.dp)
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(MediaColors.Accent),
+        )
+        Spacer(Modifier.weight(1f))
+        if (position != null) {
+            val (current, total) = position
+            Text(
+                text = "$current / $total",
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.12f))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), CircleShape)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Reels kept prepared on each side of the current one. Each holds an ExoPlayer with its own
+ * video decoder, and phones only have a handful; local files prepare fast enough that one
+ * neighbour per side still makes swipes instant.
+ */
+private const val PRELOAD_PAGES = 1
+
+/** Fraction of a page a slow drag must cover to move on; lower than the default half, like Instagram. */
+private const val SNAP_THRESHOLD = 0.25f
+
+// Allocated once instead of on every recomposition of the header and each reel.
+private val HeaderScrim = Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))
+private val InfoScrim = Brush.verticalGradient(
+    0f to Color.Transparent,
+    0.45f to Color.Black.copy(alpha = 0.45f),
+    1f to Color.Black.copy(alpha = 0.85f),
+)
+private val AvatarRing = Brush.linearGradient(listOf(MediaColors.Accent, MediaColors.AccentDeep))
+
+@Composable
+private fun ReelsPager(
+    state: ReelsState,
+    onIntent: (ReelsIntent) -> Unit,
+    contentPadding: PaddingValues,
+) {
+    val pagerState = rememberPagerState(initialPage = state.currentIndex) { state.reels.size }
+    val playerPool = rememberReelPlayerPool()
+
+    // Report only fully settled pages, so a reel starts once the swipe finishes (like Instagram).
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }.collect { onIntent(ReelsIntent.PageSettled(it)) }
+    }
+
+    VerticalPager(
+        state = pagerState,
+        // Keep the reels around the current one alive and buffered so swiping feels instant.
+        beyondViewportPageCount = PRELOAD_PAGES,
+        // One page per fling, eased by a critically damped spring that carries the finger's velocity.
+        flingBehavior = PagerDefaults.flingBehavior(
+            state = pagerState,
+            pagerSnapDistance = PagerSnapDistance.atMost(1),
+            snapAnimationSpec = spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow,
+            ),
+            snapPositionalThreshold = SNAP_THRESHOLD,
+        ),
+        key = { state.reels[it].id },
+        modifier = Modifier.fillMaxSize(),
+    ) { page ->
+        val reel = state.reels[page]
+        val isCurrent = page == state.currentIndex
+        ReelItem(
+            playerPool = playerPool,
+            reel = reel,
+            isCurrent = isCurrent,
+            isPaused = state.isPaused,
+            isMuted = state.isMuted,
+            speed = state.playbackSpeed,
+            isLiked = reel.id in state.likedReelIds,
+            onTogglePlay = { onIntent(ReelsIntent.TogglePlayPause) },
+            onToggleLike = { onIntent(ReelsIntent.ToggleLike(reel.id)) },
+            onDoubleTapLike = { onIntent(ReelsIntent.DoubleTapLike(reel.id)) },
+            onOpenComments = { onIntent(ReelsIntent.OpenComments(reel.id)) },
+            onShare = { onIntent(ReelsIntent.Share(reel.id)) },
+            onToggleMute = { onIntent(ReelsIntent.ToggleMute) },
+            onCycleSpeed = { onIntent(ReelsIntent.CycleSpeed) },
+            onPlaybackError = { reason -> onIntent(ReelsIntent.PlaybackFailed(reel.id, reason)) },
+            contentPadding = contentPadding,
+        )
+    }
+}
+
+@Composable
+private fun ReelItem(
+    playerPool: ReelPlayerPool,
+    reel: Reel,
+    isCurrent: Boolean,
+    isPaused: Boolean,
+    isMuted: Boolean,
+    speed: Float,
+    isLiked: Boolean,
+    onTogglePlay: () -> Unit,
+    onToggleLike: () -> Unit,
+    onDoubleTapLike: () -> Unit,
+    onOpenComments: () -> Unit,
+    onShare: () -> Unit,
+    onToggleMute: () -> Unit,
+    onCycleSpeed: () -> Unit,
+    onPlaybackError: (String) -> Unit,
+    contentPadding: PaddingValues,
+) {
+    var progress by remember(reel.id) { mutableFloatStateOf(0f) }
+    // Where the last double-tap landed; bumping the key replays the heart even on the same spot.
+    var burstAt by remember { mutableStateOf(Offset.Zero) }
+    var burstKey by remember { mutableIntStateOf(0) }
+    // The gesture detector outlives recompositions; read the latest callbacks instead of restarting it.
+    val currentOnTap by rememberUpdatedState(onTogglePlay)
+    val currentOnDoubleTap by rememberUpdatedState(onDoubleTapLike)
+
+    Box(Modifier.fillMaxSize()) {
+        ReelPlayer(
+            pool = playerPool,
+            reel = reel,
+            shouldPlay = isCurrent && !isPaused,
+            isMuted = isMuted,
+            speed = speed,
+            onPlaybackError = onPlaybackError,
+            onProgress = { progress = it },
+        )
+
+        // Transparent layer above the video: tap toggles play/pause, double-tap likes.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { currentOnTap() },
+                        onDoubleTap = {
+                            burstAt = it
+                            burstKey++
+                            currentOnDoubleTap()
+                        },
+                    )
+                },
+        )
+
+        if (burstKey > 0) HeartBurst(at = burstAt, key = burstKey)
+
+        AnimatedVisibility(
+            visible = isCurrent && isPaused,
+            enter = fadeIn() + scaleIn(initialScale = 1.3f),
+            exit = fadeOut() + scaleOut(targetScale = 1.3f),
+            modifier = Modifier.align(Alignment.Center),
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(76.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.35f))
+                    .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_play),
+                    contentDescription = "Paused",
+                    tint = Color.White,
+                    // The triangle's visual centre sits left of its box; nudge it right.
+                    modifier = Modifier
+                        .offset(x = 2.dp)
+                        .size(36.dp),
+                )
+            }
+        }
+
+        ReelInfo(
+            reel = reel,
+            isMuted = isMuted,
+            speed = speed,
+            isLiked = isLiked,
+            onToggleLike = onToggleLike,
+            onOpenComments = onOpenComments,
+            onShare = onShare,
+            // Read lazily so per-frame progress only redraws the bar, not the whole reel.
+            progress = { if (isCurrent) progress else 0f },
+            onToggleMute = onToggleMute,
+            onCycleSpeed = onCycleSpeed,
+            contentPadding = contentPadding,
+            modifier = Modifier.align(Alignment.BottomStart),
+        )
+    }
+}
+
+@Composable
+private fun ReelInfo(
+    reel: Reel,
+    isMuted: Boolean,
+    speed: Float,
+    isLiked: Boolean,
+    onToggleLike: () -> Unit,
+    onOpenComments: () -> Unit,
+    onShare: () -> Unit,
+    progress: () -> Float,
+    onToggleMute: () -> Unit,
+    onCycleSpeed: () -> Unit,
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(InfoScrim)
+            // The gradient extends under the floating bar; the text stays above it.
+            .padding(contentPadding)
+            .padding(top = 72.dp, bottom = 12.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            modifier = Modifier.padding(start = 20.dp, end = 16.dp),
+        ) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                ChannelRow(reel.channel)
+                Text(
+                    text = reel.title,
+                    color = Color.White.copy(alpha = 0.92f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.size(16.dp))
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                LikeButton(
+                    isLiked = isLiked,
+                    count = reel.likeCount + if (isLiked) 1 else 0,
+                    onClick = onToggleLike,
+                )
+                ReelAction(
+                    icon = R.drawable.ic_comment,
+                    label = formatCount(reel.comments.size),
+                    contentDescription = "Comments",
+                    onClick = onOpenComments,
+                )
+                ReelAction(
+                    icon = R.drawable.ic_share,
+                    label = formatCount(reel.shareCount),
+                    contentDescription = "Share",
+                    onClick = onShare,
+                )
+                Spacer(Modifier.height(4.dp))
+                SpeedButton(speed = speed, onClick = onCycleSpeed)
+                GlassIconButton(
+                    icon = if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_on,
+                    contentDescription = if (isMuted) "Unmute" else "Mute",
+                    onClick = onToggleMute,
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        ReelProgress(progress, Modifier.padding(horizontal = 20.dp))
+    }
+}
+
+@Composable
+private fun ChannelRow(channel: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        // Monogram avatar inside a champagne ring.
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(38.dp)
+                .border(
+                    width = 1.5.dp,
+                    brush = AvatarRing,
+                    shape = CircleShape,
+                )
+                .padding(3.dp)
+                .clip(CircleShape)
+                .background(MediaColors.SurfaceRaised),
+        ) {
+            Text(
+                text = channel.first().uppercase(),
+                color = MediaColors.Accent,
+                style = MaterialTheme.typography.titleSmall,
+            )
+        }
+        Column(Modifier.padding(start = 10.dp)) {
+            Text(
+                text = channel,
+                color = Color.White,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "@${channel.replace(" ", "").lowercase()}",
+                color = Color.White.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Instagram's like red. */
+private val LikeRed = Color(0xFFFF3040)
+
+/** Icon over its count, no background, like Instagram's right rail. */
+@Composable
+private fun ReelAction(
+    icon: Int,
+    label: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+    tint: Color = Color.White,
+    iconModifier: Modifier = Modifier,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClickLabel = contentDescription, onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = iconModifier.size(28.dp),
+        )
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+/** Heart that pops and turns red when liked. */
+@Composable
+private fun LikeButton(isLiked: Boolean, count: Int, onClick: () -> Unit) {
+    val pop = remember { Animatable(1f) }
+    var firstRun by remember { mutableStateOf(true) }
+    LaunchedEffect(isLiked) {
+        // Skip the pop when the page first composes with an existing like.
+        if (firstRun) { firstRun = false; return@LaunchedEffect }
+        pop.snapTo(0.7f)
+        pop.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium))
+    }
+    val tint by animateColorAsState(if (isLiked) LikeRed else Color.White, label = "likeTint")
+    ReelAction(
+        icon = if (isLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart,
+        label = formatCount(count),
+        contentDescription = if (isLiked) "Unlike" else "Like",
+        onClick = onClick,
+        tint = tint,
+        iconModifier = Modifier.scale(pop.value),
+    )
+}
+
+private const val BURST_SIZE_DP = 96
+
+/** Big red heart that pops at the double-tap point, then floats up and fades. */
+@Composable
+private fun HeartBurst(at: Offset, key: Int) {
+    val scale = remember(key) { Animatable(0f) }
+    val alpha = remember(key) { Animatable(1f) }
+    val rise = remember(key) { Animatable(0f) }
+    LaunchedEffect(key) {
+        scale.animateTo(1f, keyframes {
+            durationMillis = 350
+            1.25f at 180
+            0.95f at 280
+        })
+        launch { rise.animateTo(-60f, tween(400)) }
+        alpha.animateTo(0f, tween(400))
+    }
+    val half = with(LocalDensity.current) { (BURST_SIZE_DP / 2).dp.roundToPx() }
+    Icon(
+        painter = painterResource(R.drawable.ic_heart_filled),
+        contentDescription = null,
+        tint = LikeRed,
+        modifier = Modifier
+            .offset { IntOffset(at.x.toInt() - half, at.y.toInt() - half) }
+            .size(BURST_SIZE_DP.dp)
+            .graphicsLayer {
+                scaleX = scale.value
+                scaleY = scale.value
+                this.alpha = alpha.value
+                translationY = rise.value
+            },
+    )
+}
+
+/** 950 → "950", 12_400 → "12.4K", 3_100_000 → "3.1M". */
+private fun formatCount(n: Int): String = when {
+    n >= 1_000_000 -> trimDecimal(n / 1_000_000f) + "M"
+    n >= 10_000 -> (n / 1_000).toString() + "K"
+    n >= 1_000 -> trimDecimal(n / 1_000f) + "K"
+    else -> n.toString()
+}
+
+private fun trimDecimal(v: Float): String =
+    ((v * 10).toInt() / 10f).let { if (it % 1f == 0f) it.toInt().toString() else it.toString() }
+
+@Composable
+private fun GlassIconButton(
+    icon: Int,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.14f))
+            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+            .clickable(onClick = onClick),
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = contentDescription,
+            tint = Color.White,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+/** Glass pill showing the current speed; each tap steps to the next one in [PlaybackSpeeds]. */
+@Composable
+private fun SpeedButton(speed: Float, onClick: () -> Unit) {
+    val label = (if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()) + "x"
+    val isDefault = speed == 1f
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(if (isDefault) Color.White.copy(alpha = 0.14f) else MediaColors.Accent.copy(alpha = 0.22f))
+            .border(
+                1.dp,
+                if (isDefault) Color.White.copy(alpha = 0.18f) else MediaColors.Accent.copy(alpha = 0.6f),
+                CircleShape,
+            )
+            .clickable(onClickLabel = "Change playback speed", onClick = onClick),
+    ) {
+        Text(
+            text = label,
+            color = if (isDefault) Color.White else MediaColors.Accent,
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+private val ProgressBrush = Brush.horizontalGradient(listOf(MediaColors.AccentDeep, MediaColors.Accent))
+
+/** Hairline progress track. The player reports every frame, so [progress] is read only while drawing. */
+@Composable
+private fun ReelProgress(progress: () -> Float, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(2.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.18f))
+            .drawBehind {
+                drawRect(ProgressBrush, size = size.copy(width = size.width * progress()))
+            },
+    )
+}
+
+@Composable
+private fun ReelsError(
+    message: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.padding(32.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .background(MediaColors.Accent.copy(alpha = 0.12f))
+                .border(1.dp, MediaColors.Accent.copy(alpha = 0.3f), CircleShape),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_reels),
+                contentDescription = null,
+                tint = MediaColors.Accent,
+                modifier = Modifier.size(30.dp),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("Something went quiet", color = Color.White, style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = message,
+            color = Color.White.copy(alpha = 0.6f),
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(24.dp))
+        OutlinedButton(
+            onClick = onRetry,
+            border = BorderStroke(1.dp, MediaColors.Accent.copy(alpha = 0.6f)),
+            contentPadding = PaddingValues(horizontal = 28.dp, vertical = 12.dp),
+        ) {
+            Text("Try again", color = MediaColors.Accent, style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}
+
+@Preview
+@Composable
+private fun ReelsErrorPreview() {
+    MediaTheme {
+        ReelsContent(
+            state = ReelsState(isLoading = false, error = "Couldn't load reels"),
+            onIntent = {},
+            snackbarHostState = remember { SnackbarHostState() },
+        )
+    }
+}

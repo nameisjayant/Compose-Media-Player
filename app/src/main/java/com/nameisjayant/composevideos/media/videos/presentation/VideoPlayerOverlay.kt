@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
@@ -86,6 +87,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -119,6 +122,9 @@ import kotlinx.coroutines.launch
 
 /** How long the controls stay up after the last touch while the video plays. */
 private const val CONTROLS_TIMEOUT_MS = 3_000L
+
+/** How long the unlock button stays up after a tap on the locked screen. */
+private const val UNLOCK_HINT_TIMEOUT_MS = 2_500L
 
 /** How much the app is dimmed while the full player slides over it. */
 private const val UNDERLAY_DIM = 0.4f
@@ -177,6 +183,9 @@ fun VideoPlayerOverlay(
     val qualities by rememberVideoQualities(player)
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
     val showSettings = settingsOpen && !isCollapsing && !isInPip
+    // Full screen only: shuts out every touch on the player so a stray palm can't pause or seek.
+    var lockRequested by rememberSaveable { mutableStateOf(false) }
+    val isLocked = lockRequested && isLandscape && !isInPip && !isMini
 
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
     val topInset = WindowInsets.statusBars.getTop(density)
@@ -203,6 +212,7 @@ fun VideoPlayerOverlay(
 
     suspend fun close() {
         offscreen.animateTo(1f, MediaMotion.exitSpec())
+        lockRequested = false
         viewModel.onIntent(VideoPlayerIntent.Close)
     }
 
@@ -225,7 +235,7 @@ fun VideoPlayerOverlay(
 
     // Back slides the full player away, following the predictive-back gesture as it goes. The
     // floating window leaves back to the screen underneath.
-    PredictiveBackHandler(enabled = !isMini && !isInPip) { progress ->
+    PredictiveBackHandler(enabled = !isMini && !isInPip && !isLocked) { progress ->
         try {
             progress.collect { offscreen.snapTo(it.progress) }
             close()
@@ -241,6 +251,12 @@ fun VideoPlayerOverlay(
     // The menu doesn't follow the player into the floating window or picture-in-picture.
     LaunchedEffect(isCollapsing, isInPip) {
         if (isCollapsing || isInPip) settingsOpen = false
+    }
+
+    // The lock is for full screen; leaving it (rotating back) or hitting an error lets go of it,
+    // so the user is never stuck behind it.
+    LaunchedEffect(isLandscape, state.error) {
+        if (!isLandscape || state.error != null) lockRequested = false
     }
 
     HideSystemBarsEffect(hide = isLandscape && !isInPip && !isMini)
@@ -292,8 +308,9 @@ fun VideoPlayerOverlay(
             .fillMaxSize()
             .onSizeChanged { overlaySize = it }
             .then(
-                // Swipes on the open settings menu shouldn't drag the player down behind it.
-                if (isMini || isInPip || showSettings) {
+                // Swipes on the open settings menu shouldn't drag the player down behind it, and a
+                // locked screen doesn't move at all.
+                if (isMini || isInPip || showSettings || isLocked) {
                     Modifier
                 } else {
                     Modifier.draggable(
@@ -383,8 +400,13 @@ fun VideoPlayerOverlay(
                 state = state,
                 isFullScreen = isLandscape,
                 showChrome = !isCollapsing && !isInPip,
+                isLocked = isLocked,
                 onBack = onClose,
                 onOpenSettings = { settingsOpen = true },
+                onLockChange = {
+                    lockRequested = it
+                    settingsOpen = false
+                },
                 onRetry = { viewModel.onIntent(VideoPlayerIntent.LoadVideo) },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -604,8 +626,10 @@ private fun VideoSurface(
     state: VideoPlayerState,
     isFullScreen: Boolean,
     showChrome: Boolean,
+    isLocked: Boolean,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    onLockChange: (Boolean) -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -625,6 +649,30 @@ private fun VideoSurface(
 
     KeepScreenOnEffect(keepOn = !playPause.showPlay)
 
+    // While locked, a tap only brings up the unlock button for a moment.
+    var unlockHintVisible by remember { mutableStateOf(false) }
+    var unlockHintTaps by remember { mutableIntStateOf(0) }
+    fun showUnlockHint() {
+        unlockHintVisible = true
+        unlockHintTaps++
+    }
+    LaunchedEffect(unlockHintVisible, unlockHintTaps) {
+        if (unlockHintVisible) {
+            delay(UNLOCK_HINT_TIMEOUT_MS)
+            unlockHintVisible = false
+        }
+    }
+    LaunchedEffect(isLocked) {
+        if (isLocked) {
+            controlsVisible = false
+            showUnlockHint()
+        } else {
+            unlockHintVisible = false
+        }
+    }
+    // Back doesn't leave a locked player either; it points at the unlock button instead.
+    BackHandler(enabled = isLocked && showChrome) { showUnlockHint() }
+
     val haptics = LocalHapticFeedback.current
     val seekFeedback = remember { SeekFeedbackState() }
     val canSeek by rememberUpdatedState(state.error == null && !state.isLoading)
@@ -640,7 +688,7 @@ private fun VideoSurface(
         // these controls).
         modifier = modifier
             .doubleTapToSeek(
-                enabled = showChrome,
+                enabled = showChrome && !isLocked,
                 seekEnabled = { canSeek },
                 isSeeking = seekFeedback::isSeeking,
                 onTap = toggleControls,
@@ -652,8 +700,23 @@ private fun VideoSurface(
                     haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
                 },
             )
+            .then(
+                if (isLocked && showChrome) {
+                    Modifier.pointerInput(Unit) { detectTapGestures { showUnlockHint() } }
+                } else {
+                    Modifier
+                },
+            )
             .semantics {
                 if (!showChrome) return@semantics
+                if (isLocked) {
+                    onClick(label = "Show unlock button") {
+                        showUnlockHint()
+                        true
+                    }
+                    customActions = listOf(CustomAccessibilityAction("Unlock screen") { onLockChange(false); true })
+                    return@semantics
+                }
                 onClick(label = if (controlsVisible) "Hide controls" else "Show controls") {
                     toggleControls()
                     true
@@ -694,7 +757,7 @@ private fun VideoSurface(
             )
 
             else -> AnimatedVisibility(
-                visible = controlsVisible && showChrome,
+                visible = controlsVisible && showChrome && !isLocked,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxSize(),
@@ -716,12 +779,23 @@ private fun VideoSurface(
             }
         }
 
-        if (showChrome) SeekFeedback(seekFeedback)
+        if (showChrome && !isLocked) SeekFeedback(seekFeedback)
+
+        AnimatedVisibility(
+            visible = showChrome && isLocked && unlockHintVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 20.dp),
+        ) {
+            UnlockButton(onClick = { onLockChange(false) })
+        }
 
         // Back stays reachable even while the controls are hidden in portrait; in full screen it
         // comes and goes with them (with the title), so nothing sits on the video.
         AnimatedVisibility(
-            visible = showChrome && (!isFullScreen || controlsVisible || state.error != null),
+            visible = showChrome && !isLocked && (!isFullScreen || controlsVisible || state.error != null),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopStart),
@@ -752,7 +826,20 @@ private fun VideoSurface(
                 } else {
                     Spacer(Modifier.weight(1f))
                 }
-                // Quality and speed; comes and goes with the controls, like on YouTube.
+                // Lock and quality/speed; come and go with the controls, like on YouTube.
+                AnimatedVisibility(
+                    visible = isFullScreen && controlsVisible && state.error == null && !state.isLoading,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                ) {
+                    IconButton(onClick = { onLockChange(true) }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_lock),
+                            contentDescription = "Lock screen",
+                            tint = Color.White,
+                        )
+                    }
+                }
                 AnimatedVisibility(
                     visible = controlsVisible && state.error == null && !state.isLoading,
                     enter = fadeIn(),
@@ -768,6 +855,34 @@ private fun VideoSurface(
                 }
             }
         }
+    }
+}
+
+/** The pill shown on a locked screen; tapping it gives the controls back. */
+@Composable
+private fun UnlockButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .clip(CircleShape)
+            .background(MediaColors.Glass)
+            .border(1.dp, Color.White.copy(alpha = 0.18f), CircleShape)
+            .clickable(onClickLabel = "Unlock screen", onClick = onClick)
+            .semantics { role = Role.Button }
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_lock_open),
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Screen locked · Tap to unlock",
+            color = Color.White,
+            style = MaterialTheme.typography.labelLarge,
+        )
     }
 }
 

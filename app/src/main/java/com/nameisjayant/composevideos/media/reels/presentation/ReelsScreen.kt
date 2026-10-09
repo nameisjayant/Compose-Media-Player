@@ -63,9 +63,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -147,10 +149,17 @@ fun ReelsContent(
             else -> ReelsPager(state = state, onIntent = onIntent, contentPadding = contentPadding)
         }
 
-        ReelsHeader(
-            position = if (state.reels.isEmpty()) null else state.currentIndex + 1 to state.reels.size,
+        // Holding the video clears the chrome so only the reel is on screen, like Instagram.
+        AnimatedVisibility(
+            visible = state.hold == null,
+            enter = fadeIn(),
+            exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter),
-        )
+        ) {
+            ReelsHeader(
+                position = if (state.reels.isEmpty()) null else state.currentIndex + 1 to state.reels.size,
+            )
+        }
 
         SnackbarHost(
             hostState = snackbarHostState,
@@ -233,6 +242,9 @@ private const val PRELOAD_PAGES = 1
 /** Fraction of a page a slow drag must cover to move on; lower than the default half, like Instagram. */
 private const val SNAP_THRESHOLD = 0.25f
 
+/** Width of each side strip where a hold plays fast instead of pausing, as a fraction of the reel. */
+private const val HOLD_EDGE_FRACTION = 0.25f
+
 // Allocated once instead of on every recomposition of the header and each reel.
 private val HeaderScrim = Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))
 private val InfoScrim = Brush.verticalGradient(
@@ -280,10 +292,13 @@ private fun ReelsPager(
             reel = reel,
             isCurrent = isCurrent,
             isPaused = state.isPaused,
+            hold = if (isCurrent) state.hold else null,
             isMuted = state.isMuted,
             speed = state.playbackSpeed,
             isLiked = reel.id in state.likedReelIds,
             onTogglePlay = { onIntent(ReelsIntent.TogglePlayPause) },
+            onHoldStart = { onIntent(ReelsIntent.HoldStarted(it)) },
+            onHoldEnd = { onIntent(ReelsIntent.HoldReleased) },
             onToggleLike = { onIntent(ReelsIntent.ToggleLike(reel.id)) },
             onDoubleTapLike = { onIntent(ReelsIntent.DoubleTapLike(reel.id)) },
             onOpenComments = { onIntent(ReelsIntent.OpenComments(reel.id)) },
@@ -302,10 +317,13 @@ private fun ReelItem(
     reel: Reel,
     isCurrent: Boolean,
     isPaused: Boolean,
+    hold: ReelHold?,
     isMuted: Boolean,
     speed: Float,
     isLiked: Boolean,
     onTogglePlay: () -> Unit,
+    onHoldStart: (ReelHold) -> Unit,
+    onHoldEnd: () -> Unit,
     onToggleLike: () -> Unit,
     onDoubleTapLike: () -> Unit,
     onOpenComments: () -> Unit,
@@ -322,24 +340,49 @@ private fun ReelItem(
     // The gesture detector outlives recompositions; read the latest callbacks instead of restarting it.
     val currentOnTap by rememberUpdatedState(onTogglePlay)
     val currentOnDoubleTap by rememberUpdatedState(onDoubleTapLike)
+    val currentOnHoldStart by rememberUpdatedState(onHoldStart)
+    val currentOnHoldEnd by rememberUpdatedState(onHoldEnd)
+    val haptics = LocalHapticFeedback.current
 
     Box(Modifier.fillMaxSize()) {
         ReelPlayer(
             pool = playerPool,
             reel = reel,
-            shouldPlay = isCurrent && !isPaused,
+            // Holding fast-forward plays even a paused reel, then leaves it paused on release.
+            shouldPlay = isCurrent && when (hold) {
+                ReelHold.Pause -> false
+                ReelHold.FastForward -> true
+                null -> !isPaused
+            },
             isMuted = isMuted,
-            speed = speed,
+            speed = if (hold == ReelHold.FastForward) HoldSpeed else speed,
             onPlaybackError = onPlaybackError,
             onProgress = { progress = it },
         )
 
-        // Transparent layer above the video: tap toggles play/pause, double-tap likes.
+        // Transparent layer above the video: tap toggles play/pause, double-tap likes, and a hold
+        // pauses (middle) or plays fast (edges) until the finger lifts.
         Box(
             Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
+                    var holding = false
                     detectTapGestures(
+                        onPress = {
+                            // Also returns when the pager takes the gesture over for a swipe.
+                            tryAwaitRelease()
+                            if (holding) {
+                                holding = false
+                                currentOnHoldEnd()
+                            }
+                        },
+                        onLongPress = {
+                            val edge = size.width * HOLD_EDGE_FRACTION
+                            val fast = it.x < edge || it.x > size.width - edge
+                            holding = true
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            currentOnHoldStart(if (fast) ReelHold.FastForward else ReelHold.Pause)
+                        },
                         onTap = { currentOnTap() },
                         onDoubleTap = {
                             burstAt = it
@@ -353,7 +396,7 @@ private fun ReelItem(
         if (burstKey > 0) HeartBurst(at = burstAt, key = burstKey)
 
         AnimatedVisibility(
-            visible = isCurrent && isPaused,
+            visible = isCurrent && isPaused && hold == null,
             enter = fadeIn() + scaleIn(initialScale = 1.3f),
             exit = fadeOut() + scaleOut(targetScale = 1.3f),
             modifier = Modifier.align(Alignment.Center),
@@ -378,22 +421,55 @@ private fun ReelItem(
             }
         }
 
-        ReelInfo(
-            reel = reel,
-            isMuted = isMuted,
-            speed = speed,
-            isLiked = isLiked,
-            onToggleLike = onToggleLike,
-            onOpenComments = onOpenComments,
-            onShare = onShare,
-            // Read lazily so per-frame progress only redraws the bar, not the whole reel.
-            progress = { if (isCurrent) progress else 0f },
-            onToggleMute = onToggleMute,
-            onCycleSpeed = onCycleSpeed,
-            contentPadding = contentPadding,
+        AnimatedVisibility(
+            visible = hold == ReelHold.FastForward,
+            enter = fadeIn() + scaleIn(initialScale = 0.8f),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 16.dp),
+        ) {
+            FastForwardBadge()
+        }
+
+        AnimatedVisibility(
+            visible = hold == null,
+            enter = fadeIn(),
+            exit = fadeOut(),
             modifier = Modifier.align(Alignment.BottomStart),
-        )
+        ) {
+            ReelInfo(
+                reel = reel,
+                isMuted = isMuted,
+                speed = speed,
+                isLiked = isLiked,
+                onToggleLike = onToggleLike,
+                onOpenComments = onOpenComments,
+                onShare = onShare,
+                // Read lazily so per-frame progress only redraws the bar, not the whole reel.
+                progress = { if (isCurrent) progress else 0f },
+                onToggleMute = onToggleMute,
+                onCycleSpeed = onCycleSpeed,
+                contentPadding = contentPadding,
+            )
+        }
     }
+}
+
+/** Glass pill shown while a hold plays the reel at [HoldSpeed]. */
+@Composable
+private fun FastForwardBadge() {
+    Text(
+        text = "${HoldSpeed.toInt()}x speed  ››",
+        color = Color.White,
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.4f))
+            .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 @Composable

@@ -37,7 +37,7 @@ class ReelsViewModel @Inject constructor(
             is ReelsIntent.PageSettled -> _state.update {
                 // A newly settled reel always starts playing, like Instagram.
                 if (it.currentIndex == intent.index) it
-                else it.copy(currentIndex = intent.index, isPaused = false)
+                else it.copy(currentIndex = intent.index, isPaused = false, hold = null)
             }
             ReelsIntent.TogglePlayPause -> _state.update { it.copy(isPaused = !it.isPaused) }
             ReelsIntent.ToggleMute -> _state.update { it.copy(isMuted = !it.isMuted) }
@@ -45,6 +45,8 @@ class ReelsViewModel @Inject constructor(
                 val next = (PlaybackSpeeds.indexOf(it.playbackSpeed) + 1) % PlaybackSpeeds.size
                 it.copy(playbackSpeed = PlaybackSpeeds[next])
             }
+            is ReelsIntent.HoldStarted -> _state.update { it.copy(hold = intent.hold) }
+            ReelsIntent.HoldReleased -> _state.update { it.copy(hold = null) }
             is ReelsIntent.PlaybackFailed -> viewModelScope.launch {
                 val title = _state.value.reels.firstOrNull { it.id == intent.reelId }?.title ?: "This reel"
                 _effects.send(ReelsEffect.ShowMessage("$title can't be played (${intent.reason})"))

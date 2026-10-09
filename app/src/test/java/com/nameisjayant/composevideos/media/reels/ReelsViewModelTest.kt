@@ -2,6 +2,7 @@ package com.nameisjayant.composevideos.media.reels
 
 import com.nameisjayant.composevideos.media.reels.data.Reel
 import com.nameisjayant.composevideos.media.reels.data.ReelsRepository
+import com.nameisjayant.composevideos.media.reels.presentation.ReelHold
 import com.nameisjayant.composevideos.media.reels.presentation.ReelsEffect
 import com.nameisjayant.composevideos.media.reels.presentation.ReelsIntent
 import com.nameisjayant.composevideos.media.reels.presentation.ReelsViewModel
@@ -78,6 +79,28 @@ class ReelsViewModelTest {
         vm.onIntent(ReelsIntent.TogglePlayPause)
         vm.onIntent(ReelsIntent.PageSettled(0))
         assertTrue(vm.state.value.isPaused)
+    }
+
+    @Test
+    fun `hold applies until released and leaves pause state alone`() {
+        val vm = ReelsViewModel(FakeRepository { reels })
+        vm.onIntent(ReelsIntent.HoldStarted(ReelHold.Pause))
+        assertEquals(ReelHold.Pause, vm.state.value.hold)
+        vm.onIntent(ReelsIntent.HoldReleased)
+        assertNull(vm.state.value.hold)
+        assertFalse(vm.state.value.isPaused)
+
+        vm.onIntent(ReelsIntent.HoldStarted(ReelHold.FastForward))
+        assertEquals(ReelHold.FastForward, vm.state.value.hold)
+        assertEquals(1f, vm.state.value.playbackSpeed)
+    }
+
+    @Test
+    fun `settling on a new page drops a hold`() {
+        val vm = ReelsViewModel(FakeRepository { reels })
+        vm.onIntent(ReelsIntent.HoldStarted(ReelHold.FastForward))
+        vm.onIntent(ReelsIntent.PageSettled(1))
+        assertNull(vm.state.value.hold)
     }
 
     @Test

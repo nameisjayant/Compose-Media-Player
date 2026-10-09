@@ -14,7 +14,15 @@ data class ReelsState(
     val likedReelIds: Set<String> = emptySet(),
     /** Reel whose comments sheet is open, or null when it's closed. */
     val commentsReelId: String? = null,
+    /** What a finger held on the video is doing, or null when nothing's held. */
+    val hold: ReelHold? = null,
 )
+
+/** Long-press on the video: the middle pauses (Instagram), the edges play fast (TikTok). */
+enum class ReelHold { Pause, FastForward }
+
+/** Speed while [ReelHold.FastForward] is held. */
+const val HoldSpeed = 2f
 
 /** Speeds the speed button steps through, wrapping back to the first. */
 val PlaybackSpeeds = listOf(1f, 1.5f, 2f, 0.5f)
@@ -26,6 +34,8 @@ sealed interface ReelsIntent {
     data object TogglePlayPause : ReelsIntent
     data object ToggleMute : ReelsIntent
     data object CycleSpeed : ReelsIntent
+    data class HoldStarted(val hold: ReelHold) : ReelsIntent
+    data object HoldReleased : ReelsIntent
     data class PlaybackFailed(val reelId: String, val reason: String) : ReelsIntent
     data class ToggleLike(val reelId: String) : ReelsIntent
     /** Double-tap on the video: only ever likes, never unlikes, like Instagram. */

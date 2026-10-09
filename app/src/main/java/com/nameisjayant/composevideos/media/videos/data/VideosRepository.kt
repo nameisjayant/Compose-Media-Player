@@ -24,8 +24,9 @@ class VideosRepositoryImpl @Inject constructor(
 }
 
 /**
- * One-minute 16:9 (1280x720) clips cut from Blender Foundation open movies, all licensed CC BY,
+ * One-minute 16:9 clips cut from Blender Foundation open movies, all licensed CC BY,
  * so the channel credit must stay visible. Sintel and Tears of Steel are letterboxed, as released.
+ * Each file carries 720p, 480p and 360p video tracks over one audio track, for the quality menu.
  * - Big Buck Bunny (2008), from 1:15, © Blender Foundation | peach.blender.org
  * - Sintel (2010), from 1:30, © Blender Foundation | durian.blender.org
  * - Tears of Steel (2012), from 0:40, © Blender Foundation | mango.blender.org

@@ -63,6 +63,7 @@
 | **Smooth open animation** | The player slides up over the app using Material 3 *emphasized* easing curves. |
 | **Full player controls** | Play/pause, seek bar and auto-hiding controls (3 s timeout) with gradient scrims. |
 | **Double-tap to seek ±10 s** | Double-tap the **left** half to rewind or the **right** half to fast-forward 10 s. Keep tapping on the same side to add 10 s per tap. A curved shaded panel grows in from the edge with **overlapping ripples** from each tap, animated chevrons, a rolling seconds counter and a haptic tick. Drags still swipe the player down, and TalkBack gets *Rewind / Forward 10 seconds* actions. |
+| **Quality & speed menu** | A ⚙️ button in the player (portrait and full screen) opens a two-level menu that slides up from the bottom. **Quality** lists the video tracks the clip offers — **Auto (720p)**, **720p**, **480p**, **360p** — read live from `player.currentTracks` and applied as a `TrackSelectionParameters` max-video-size cap, so the choice carries over to the next video. **Playback speed** offers YouTube's **0.25× – 2×** steps. Both survive closing the player, rotation and process death; Back or a tap outside closes the menu. |
 | **In-app floating window** | Drag the player down to shrink it into a **mini floating window** that keeps playing while you browse; drag it to any of the **four corners**, fling to dock, and tap to expand again. |
 | **Picture-in-Picture** | Leaving the app while a video plays continues it in a system **PiP window** with a play/pause action — auto-enter on Android 12+, `onUserLeaveHint` on older versions. |
 | **State survives rotation** | Player position, collapse state and docked corner are saved with a custom `Saver`. |
@@ -273,6 +274,8 @@ ViewModels are covered by JVM unit tests using fake repositories and `kotlinx-co
 ## 🎥 Media Credits
 
 All bundled clips are cut from **Blender Foundation open movies**, licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The channel credit is kept visible in-app as the license requires.
+
+Each Videos-tab clip is a single MP4 with three video tracks — the original **720p** plus re-encoded **480p** (~400 kbps) and **360p** (~220 kbps) — sharing one audio track, so the quality menu has real renditions to switch between offline.
 
 - **Big Buck Bunny** (2008) — © Blender Foundation | peach.blender.org
 - **Sintel** (2010) — © Blender Foundation | durian.blender.org

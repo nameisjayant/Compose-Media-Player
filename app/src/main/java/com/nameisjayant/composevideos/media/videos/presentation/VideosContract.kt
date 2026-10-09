@@ -25,6 +25,10 @@ data class VideoPlayerState(
     val isLoading: Boolean = false,
     val video: Video? = null,
     val error: String? = null,
+    /** Kept from one video to the next, like the quality below. */
+    val playbackSpeed: Float = 1f,
+    /** The tallest video track to play, e.g. 480; null picks the best one automatically. */
+    val maxQuality: Int? = null,
 )
 
 sealed interface VideoPlayerIntent {
@@ -32,4 +36,7 @@ sealed interface VideoPlayerIntent {
     data object Close : VideoPlayerIntent
     data object LoadVideo : VideoPlayerIntent
     data class PlaybackFailed(val reason: String) : VideoPlayerIntent
+    data class SetPlaybackSpeed(val speed: Float) : VideoPlayerIntent
+    /** [height] null goes back to Auto. */
+    data class SetQuality(val height: Int?) : VideoPlayerIntent
 }

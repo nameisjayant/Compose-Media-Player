@@ -58,6 +58,9 @@ class VideoPlayerViewModel @Inject constructor(
     private var loadJob: Job? = null
 
     init {
+        // Speed and quality carry on from where they were set, even after process death.
+        savedStateHandle.get<Float>(KEY_SPEED)?.let(::setPlaybackSpeed)
+        savedStateHandle.get<Int>(KEY_QUALITY)?.let(::setQuality)
         // Back after process death: reopen the video and pick playback up once the app is visible.
         savedStateHandle.get<String>(KEY_VIDEO_ID)?.let {
             open(it)
@@ -75,6 +78,8 @@ class VideoPlayerViewModel @Inject constructor(
             VideoPlayerIntent.LoadVideo -> loadVideo()
             is VideoPlayerIntent.PlaybackFailed ->
                 _state.update { it.copy(error = "This video can't be played (${intent.reason})") }
+            is VideoPlayerIntent.SetPlaybackSpeed -> setPlaybackSpeed(intent.speed)
+            is VideoPlayerIntent.SetQuality -> setQuality(intent.height)
         }
     }
 
@@ -105,7 +110,27 @@ class VideoPlayerViewModel @Inject constructor(
         player.pause()
         player.stop()
         player.clearMediaItems()
-        _state.update { VideoPlayerState(openRequest = it.openRequest) }
+        _state.update {
+            VideoPlayerState(openRequest = it.openRequest, playbackSpeed = it.playbackSpeed, maxQuality = it.maxQuality)
+        }
+    }
+
+    private fun setPlaybackSpeed(speed: Float) {
+        savedStateHandle[KEY_SPEED] = speed
+        player.setPlaybackSpeed(speed)
+        _state.update { it.copy(playbackSpeed = speed) }
+    }
+
+    /**
+     * Caps the video at [height] rather than pinning one track, so the choice carries over to the
+     * next video, whose tracks are different. Auto lifts the cap and the player picks the best.
+     */
+    private fun setQuality(height: Int?) {
+        savedStateHandle[KEY_QUALITY] = height
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .apply { if (height == null) clearVideoSizeConstraints() else setMaxVideoSize(Int.MAX_VALUE, height) }
+            .build()
+        _state.update { it.copy(maxQuality = height) }
     }
 
     private fun loadVideo() {
@@ -144,5 +169,7 @@ class VideoPlayerViewModel @Inject constructor(
 
     private companion object {
         const val KEY_VIDEO_ID = "videoId"
+        const val KEY_SPEED = "playbackSpeed"
+        const val KEY_QUALITY = "maxQuality"
     }
 }

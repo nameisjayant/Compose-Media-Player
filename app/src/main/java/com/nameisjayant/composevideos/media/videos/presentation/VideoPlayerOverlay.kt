@@ -1,6 +1,7 @@
 package com.nameisjayant.composevideos.media.videos.presentation
 
 import android.content.res.Configuration
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.annotation.OptIn
@@ -172,6 +173,9 @@ fun VideoPlayerOverlay(
     val isCollapsing by remember { derivedStateOf { collapse.value > 0f } }
     val isMini by remember { derivedStateOf { collapse.value >= 1f } }
     val videoOnly = isLandscape || isInPip
+    val qualities by rememberVideoQualities(player)
+    var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    val showSettings = settingsOpen && !isCollapsing && !isInPip
 
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
     val topInset = WindowInsets.statusBars.getTop(density)
@@ -230,6 +234,14 @@ fun VideoPlayerOverlay(
         }
     }
 
+    // Registered after the handler above, so Back closes the settings menu first.
+    BackHandler(enabled = showSettings) { settingsOpen = false }
+
+    // The menu doesn't follow the player into the floating window or picture-in-picture.
+    LaunchedEffect(isCollapsing, isInPip) {
+        if (isCollapsing || isInPip) settingsOpen = false
+    }
+
     HideSystemBarsEffect(hide = isLandscape && !isInPip && !isMini)
 
     // Going home (or swiping up) mid-video keeps it playing in a system floating window.
@@ -277,7 +289,8 @@ fun VideoPlayerOverlay(
             .fillMaxSize()
             .onSizeChanged { overlaySize = it }
             .then(
-                if (isMini || isInPip) {
+                // Swipes on the open settings menu shouldn't drag the player down behind it.
+                if (isMini || isInPip || showSettings) {
                     Modifier
                 } else {
                     Modifier.draggable(
@@ -368,6 +381,7 @@ fun VideoPlayerOverlay(
                 isFullScreen = isLandscape,
                 showChrome = !isCollapsing && !isInPip,
                 onBack = onClose,
+                onOpenSettings = { settingsOpen = true },
                 onRetry = { viewModel.onIntent(VideoPlayerIntent.LoadVideo) },
                 modifier = Modifier.fillMaxSize(),
             )
@@ -401,6 +415,22 @@ fun VideoPlayerOverlay(
                 )
             }
         }
+
+        PlaybackSettingsPanel(
+            visible = showSettings,
+            speed = state.playbackSpeed,
+            maxQuality = state.maxQuality,
+            qualities = qualities,
+            onSpeed = {
+                viewModel.onIntent(VideoPlayerIntent.SetPlaybackSpeed(it))
+                settingsOpen = false
+            },
+            onQuality = {
+                viewModel.onIntent(VideoPlayerIntent.SetQuality(it))
+                settingsOpen = false
+            },
+            onDismiss = { settingsOpen = false },
+        )
     }
 }
 
@@ -526,6 +556,7 @@ private fun VideoSurface(
     isFullScreen: Boolean,
     showChrome: Boolean,
     onBack: () -> Unit,
+    onOpenSettings: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -667,7 +698,24 @@ private fun VideoSurface(
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+                // Quality and speed; comes and goes with the controls, like on YouTube.
+                AnimatedVisibility(
+                    visible = controlsVisible && state.error == null && !state.isLoading,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                ) {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_settings),
+                            contentDescription = "Quality and playback speed",
+                            tint = Color.White,
+                        )
+                    }
                 }
             }
         }

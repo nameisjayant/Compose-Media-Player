@@ -3,6 +3,7 @@ package com.nameisjayant.composevideos.media.reels.presentation
 import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.Spring
@@ -57,7 +58,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -334,6 +334,9 @@ private fun ReelItem(
     contentPadding: PaddingValues,
 ) {
     var progress by remember(reel.id) { mutableFloatStateOf(0f) }
+    // Dragging the progress bar pauses the reel; releasing it queues a seek for the player.
+    var isScrubbing by remember(reel.id) { mutableStateOf(false) }
+    var seekTarget by remember(reel.id) { mutableStateOf<Float?>(null) }
     // Where the last double-tap landed; bumping the key replays the heart even on the same spot.
     var burstAt by remember { mutableStateOf(Offset.Zero) }
     var burstKey by remember { mutableIntStateOf(0) }
@@ -349,7 +352,7 @@ private fun ReelItem(
             pool = playerPool,
             reel = reel,
             // Holding fast-forward plays even a paused reel, then leaves it paused on release.
-            shouldPlay = isCurrent && when (hold) {
+            shouldPlay = isCurrent && !isScrubbing && when (hold) {
                 ReelHold.Pause -> false
                 ReelHold.FastForward -> true
                 null -> !isPaused
@@ -358,6 +361,8 @@ private fun ReelItem(
             speed = if (hold == ReelHold.FastForward) HoldSpeed else speed,
             onPlaybackError = onPlaybackError,
             onProgress = { progress = it },
+            seekTo = seekTarget,
+            onSeeked = { seekTarget = null },
         )
 
         // Transparent layer above the video: tap toggles play/pause, double-tap likes, and a hold
@@ -449,6 +454,16 @@ private fun ReelItem(
                 onShare = onShare,
                 // Read lazily so per-frame progress only redraws the bar, not the whole reel.
                 progress = { if (isCurrent) progress else 0f },
+                isScrubbing = isScrubbing,
+                onScrubStart = { isScrubbing = true },
+                onScrubEnd = { fraction ->
+                    isScrubbing = false
+                    if (fraction != null) {
+                        // Jump the bar now; the player only reports again once it resumes.
+                        progress = fraction
+                        seekTarget = fraction
+                    }
+                },
                 onToggleMute = onToggleMute,
                 onCycleSpeed = onCycleSpeed,
                 contentPadding = contentPadding,
@@ -482,22 +497,29 @@ private fun ReelInfo(
     onOpenComments: () -> Unit,
     onShare: () -> Unit,
     progress: () -> Float,
+    isScrubbing: Boolean,
+    onScrubStart: () -> Unit,
+    onScrubEnd: (fraction: Float?) -> Unit,
     onToggleMute: () -> Unit,
     onCycleSpeed: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
+    // Scrubbing clears the caption and actions so the preview has the screen, like Instagram.
+    val chromeAlpha = animateFloatAsState(if (isScrubbing) 0f else 1f, label = "chromeAlpha")
     Column(
         modifier = modifier
             .fillMaxWidth()
             .background(InfoScrim)
             // The gradient extends under the floating bar; the text stays above it.
             .padding(contentPadding)
-            .padding(top = 72.dp, bottom = 12.dp),
+            .padding(top = 72.dp),
     ) {
         Row(
             verticalAlignment = Alignment.Bottom,
-            modifier = Modifier.padding(start = 20.dp, end = 16.dp),
+            modifier = Modifier
+                .padding(start = 20.dp, end = 16.dp)
+                .graphicsLayer { alpha = chromeAlpha.value },
         ) {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -543,8 +565,15 @@ private fun ReelInfo(
                 )
             }
         }
-        Spacer(Modifier.height(16.dp))
-        ReelProgress(progress, Modifier.padding(horizontal = 20.dp))
+        // The bar sits in a taller touch strip; these spacings keep the hairline where it was.
+        Spacer(Modifier.height(4.dp))
+        ReelProgress(
+            videoRes = reel.videoRes,
+            progress = progress,
+            onScrubStart = onScrubStart,
+            onScrubEnd = onScrubEnd,
+            modifier = Modifier.padding(horizontal = 20.dp),
+        )
     }
 }
 
@@ -739,23 +768,6 @@ private fun SpeedButton(speed: Float, onClick: () -> Unit) {
             style = MaterialTheme.typography.labelMedium,
         )
     }
-}
-
-private val ProgressBrush = Brush.horizontalGradient(listOf(MediaColors.AccentDeep, MediaColors.Accent))
-
-/** Hairline progress track. The player reports every frame, so [progress] is read only while drawing. */
-@Composable
-private fun ReelProgress(progress: () -> Float, modifier: Modifier = Modifier) {
-    Box(
-        modifier
-            .fillMaxWidth()
-            .height(2.dp)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.18f))
-            .drawBehind {
-                drawRect(ProgressBrush, size = size.copy(width = size.width * progress()))
-            },
-    )
 }
 
 @Composable

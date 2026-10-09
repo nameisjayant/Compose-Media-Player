@@ -122,6 +122,8 @@ fun ReelPlayer(
     onPlaybackError: (reason: String) -> Unit,
     modifier: Modifier = Modifier,
     onProgress: (fraction: Float) -> Unit = {},
+    seekTo: Float? = null,
+    onSeeked: () -> Unit = {},
 ) {
     val player = remember(pool, reel.id) { pool.lease(reel) }.player
 
@@ -141,6 +143,13 @@ fun ReelPlayer(
         onDispose { player.removeListener(listener) }
     }
 
+    // Declared before the play effect so a seek lands before playback resumes from a scrub.
+    LaunchedEffect(player, seekTo) {
+        if (seekTo == null) return@LaunchedEffect
+        val duration = player.duration
+        if (duration > 0) player.seekTo((duration * seekTo).toLong())
+        onSeeked()
+    }
     LaunchedEffect(player, play) {
         player.playWhenReady = play
         // Sample once per frame so the progress bar glides instead of stepping.

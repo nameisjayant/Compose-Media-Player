@@ -18,11 +18,15 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/** How long the up-next countdown runs at the end of a video before the next one starts. */
+internal const val AUTOPLAY_COUNTDOWN_SECONDS = 5
 
 /**
  * Owns the [player] for the whole activity, so the video keeps playing in the floating window
@@ -55,9 +59,21 @@ class VideoPlayerViewModel @Inject constructor(
     /** Whether to (re)start playback the next time the app is in the foreground. */
     private var resumeOnForeground = false
 
+    /** Whether to restart the end-of-video countdown the next time the app is in the foreground. */
+    private var countdownOnForeground = false
+
     private var loadJob: Job? = null
 
+    private var countdownJob: Job? = null
+
     init {
+        // Counts down to the next video when one ends; a replay or seek off the end calls it off.
+        player.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED) startCountdown() else cancelCountdown()
+            }
+        })
+        savedStateHandle.get<Boolean>(KEY_AUTOPLAY)?.let { autoplay -> _state.update { it.copy(autoplay = autoplay) } }
         // Speed and quality carry on from where they were set, even after process death.
         savedStateHandle.get<Float>(KEY_SPEED)?.let(::setPlaybackSpeed)
         savedStateHandle.get<Int>(KEY_QUALITY)?.let(::setQuality)
@@ -82,18 +98,25 @@ class VideoPlayerViewModel @Inject constructor(
                 _state.update { it.copy(error = "This video can't be played (${intent.reason})") }
             is VideoPlayerIntent.SetPlaybackSpeed -> setPlaybackSpeed(intent.speed)
             is VideoPlayerIntent.SetQuality -> setQuality(intent.height)
+            is VideoPlayerIntent.SetAutoplay -> setAutoplay(intent.enabled)
+            VideoPlayerIntent.CancelAutoplay -> cancelCountdown()
         }
     }
 
     fun onForeground() {
         if (resumeOnForeground) player.play()
         resumeOnForeground = false
+        // The countdown waits for the user to come back rather than starting a video unseen.
+        if (countdownOnForeground && player.playbackState == Player.STATE_ENDED) startCountdown()
+        countdownOnForeground = false
     }
 
     /** Not called on rotation, so playback (or a pause) carries straight across. */
     fun onBackground() {
         resumeOnForeground = player.playWhenReady
         player.pause()
+        countdownOnForeground = countdownJob?.isActive == true
+        cancelCountdown()
     }
 
     private fun open(videoId: String) {
@@ -102,6 +125,7 @@ class VideoPlayerViewModel @Inject constructor(
         _state.update { it.copy(isOpen = true, videoId = videoId, openRequest = it.openRequest + 1) }
         // Reopening the video that's already in the floating window just expands it.
         if (current.isOpen && current.videoId == videoId) return
+        cancelCountdown()
         _state.update { it.copy(video = null) }
         loadVideo()
     }
@@ -112,6 +136,7 @@ class VideoPlayerViewModel @Inject constructor(
      */
     private fun skip(step: Int) {
         val currentId = _state.value.videoId ?: return
+        cancelCountdown()
         viewModelScope.launch {
             val videos = repository.getVideos()
             if (videos.isEmpty()) return@launch
@@ -127,12 +152,18 @@ class VideoPlayerViewModel @Inject constructor(
 
     private fun close() {
         loadJob?.cancel()
+        cancelCountdown()
         savedStateHandle.remove<String>(KEY_VIDEO_ID)
         player.pause()
         player.stop()
         player.clearMediaItems()
         _state.update {
-            VideoPlayerState(openRequest = it.openRequest, playbackSpeed = it.playbackSpeed, maxQuality = it.maxQuality)
+            VideoPlayerState(
+                openRequest = it.openRequest,
+                playbackSpeed = it.playbackSpeed,
+                maxQuality = it.maxQuality,
+                autoplay = it.autoplay,
+            )
         }
     }
 
@@ -154,6 +185,33 @@ class VideoPlayerViewModel @Inject constructor(
         _state.update { it.copy(maxQuality = height) }
     }
 
+    private fun setAutoplay(enabled: Boolean) {
+        savedStateHandle[KEY_AUTOPLAY] = enabled
+        _state.update { it.copy(autoplay = enabled) }
+        if (!enabled) cancelCountdown() else if (player.playbackState == Player.STATE_ENDED) startCountdown()
+    }
+
+    /** Ticks [VideoPlayerState.autoplayCountdown] down to zero, then plays the first video up next. */
+    private fun startCountdown() {
+        val state = _state.value
+        if (!state.autoplay || state.upNext.isEmpty() || state.error != null || countdownJob?.isActive == true) return
+        countdownJob = viewModelScope.launch {
+            for (seconds in AUTOPLAY_COUNTDOWN_SECONDS downTo 1) {
+                _state.update { it.copy(autoplayCountdown = seconds) }
+                delay(1_000)
+            }
+            _state.update { it.copy(autoplayCountdown = null) }
+            countdownJob = null
+            skip(1)
+        }
+    }
+
+    private fun cancelCountdown() {
+        countdownJob?.cancel()
+        countdownJob = null
+        _state.update { it.copy(autoplayCountdown = null) }
+    }
+
     private fun loadVideo() {
         val videoId = _state.value.videoId ?: return
         loadJob?.cancel()
@@ -165,6 +223,10 @@ class VideoPlayerViewModel @Inject constructor(
                     _state.update { it.copy(isLoading = false, error = "This video isn't available") }
                     return@launch
                 }
+                val videos = repository.getVideos()
+                val index = videos.indexOfFirst { it.id == video.id }
+                // Starting just after this one and wrapping round, the same order as next.
+                val upNext = if (index < 0) emptyList() else (1 until videos.size).map { videos[(index + it) % videos.size] }
                 if (player.currentMediaItem?.mediaId != video.id) {
                     player.setMediaItem(
                         MediaItem.Builder()
@@ -175,7 +237,7 @@ class VideoPlayerViewModel @Inject constructor(
                 }
                 // Also recovers from a playback error when retrying.
                 player.prepare()
-                _state.update { it.copy(isLoading = false, video = video) }
+                _state.update { it.copy(isLoading = false, video = video, upNext = upNext) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -192,5 +254,6 @@ class VideoPlayerViewModel @Inject constructor(
         const val KEY_VIDEO_ID = "videoId"
         const val KEY_SPEED = "playbackSpeed"
         const val KEY_QUALITY = "maxQuality"
+        const val KEY_AUTOPLAY = "autoplay"
     }
 }

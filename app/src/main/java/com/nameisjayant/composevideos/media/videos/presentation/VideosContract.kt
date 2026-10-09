@@ -29,6 +29,12 @@ data class VideoPlayerState(
     val playbackSpeed: Float = 1f,
     /** The tallest video track to play, e.g. 480; null picks the best one automatically. */
     val maxQuality: Int? = null,
+    /** The rest of the list after this video, in play order, wrapping round; the first one plays next. */
+    val upNext: List<Video> = emptyList(),
+    /** Whether the next video starts by itself when this one ends. Kept like speed and quality. */
+    val autoplay: Boolean = true,
+    /** Seconds left before the next video starts, while the end-of-video countdown runs; else null. */
+    val autoplayCountdown: Int? = null,
 )
 
 sealed interface VideoPlayerIntent {
@@ -43,4 +49,7 @@ sealed interface VideoPlayerIntent {
     data class SetPlaybackSpeed(val speed: Float) : VideoPlayerIntent
     /** [height] null goes back to Auto. */
     data class SetQuality(val height: Int?) : VideoPlayerIntent
+    data class SetAutoplay(val enabled: Boolean) : VideoPlayerIntent
+    /** Stops the end-of-video countdown, leaving the video on its last frame; autoplay stays on. */
+    data object CancelAutoplay : VideoPlayerIntent
 }

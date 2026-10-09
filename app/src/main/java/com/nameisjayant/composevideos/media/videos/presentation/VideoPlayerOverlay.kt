@@ -7,10 +7,14 @@ import androidx.activity.compose.PredictiveBackHandler
 import androidx.annotation.DrawableRes
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,6 +30,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -36,6 +41,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -45,6 +51,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -66,6 +74,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -73,6 +82,8 @@ import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -354,6 +365,10 @@ fun VideoPlayerOverlay(
             state.video?.let { video ->
                 VideoDetails(
                     video = video,
+                    upNext = state.upNext,
+                    autoplay = state.autoplay,
+                    onAutoplayChange = { viewModel.onIntent(VideoPlayerIntent.SetAutoplay(it)) },
+                    onPlay = { viewModel.onIntent(VideoPlayerIntent.Open(it.id)) },
                     modifier = Modifier
                         .padding(top = with(density) { geometry.expanded.bottom.toDp() })
                         .graphicsLayer {
@@ -408,6 +423,8 @@ fun VideoPlayerOverlay(
                     settingsOpen = false
                 },
                 onRetry = { viewModel.onIntent(VideoPlayerIntent.LoadVideo) },
+                onPlayNext = { viewModel.onIntent(VideoPlayerIntent.PlayNext) },
+                onCancelAutoplay = { viewModel.onIntent(VideoPlayerIntent.CancelAutoplay) },
                 modifier = Modifier.fillMaxSize(),
             )
             AnimatedVisibility(
@@ -420,6 +437,7 @@ fun VideoPlayerOverlay(
                     showPlay = playPause.showPlay,
                     isEnded = playbackState == Player.STATE_ENDED,
                     playPauseEnabled = playPause.isEnabled,
+                    autoplayCountdown = state.autoplayCountdown,
                     onPlayPause = playPause::onClick,
                     onNext = { viewModel.onIntent(VideoPlayerIntent.PlayNext) },
                     onPrevious = { viewModel.onIntent(VideoPlayerIntent.PlayPrevious) },
@@ -506,6 +524,7 @@ private fun MiniPlayerControls(
     showPlay: Boolean,
     isEnded: Boolean,
     playPauseEnabled: Boolean,
+    autoplayCountdown: Int?,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -563,6 +582,28 @@ private fun MiniPlayerControls(
                 )
             }
             MiniSkipButton(R.drawable.ic_skip_next, "Next video", onNext)
+        }
+        // No room for the full up-next card here, so just say when the next video starts.
+        AnimatedVisibility(
+            visible = autoplayCountdown != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 6.dp),
+        ) {
+            // Holds the last number while fading out, rather than going blank.
+            var shown by remember { mutableIntStateOf(autoplayCountdown ?: 0) }
+            if (autoplayCountdown != null) shown = autoplayCountdown
+            Text(
+                text = "Next in $shown",
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(MediaColors.Glass)
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
         }
         IconButton(
             onClick = onExpand,
@@ -631,6 +672,8 @@ private fun VideoSurface(
     onOpenSettings: () -> Unit,
     onLockChange: (Boolean) -> Unit,
     onRetry: () -> Unit,
+    onPlayNext: () -> Unit,
+    onCancelAutoplay: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val playPause = rememberPlayPauseButtonState(player)
@@ -780,6 +823,33 @@ private fun VideoSurface(
         }
 
         if (showChrome && !isLocked) SeekFeedback(seekFeedback)
+
+        // Over the replay controls; cancelling it leaves them to replay. A locked screen still
+        // counts down, it just can't be tapped.
+        val nextVideo = state.upNext.firstOrNull()
+        AnimatedVisibility(
+            visible = showChrome && !isLocked && state.autoplayCountdown != null && nextVideo != null,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            // Holds on to the last values while fading out, once the state has moved on.
+            val shownVideo = remember { nextVideo }
+            var shownSeconds by remember { mutableIntStateOf(state.autoplayCountdown ?: 0) }
+            state.autoplayCountdown?.let { shownSeconds = it }
+            if (shownVideo != null) {
+                UpNextCountdown(
+                    video = shownVideo,
+                    secondsLeft = shownSeconds,
+                    isFullScreen = isFullScreen,
+                    onPlayNow = onPlayNext,
+                    onCancel = {
+                        onCancelAutoplay()
+                        controlsVisible = true
+                    },
+                )
+            }
+        }
 
         AnimatedVisibility(
             visible = showChrome && isLocked && unlockHintVisible,
@@ -1018,9 +1088,124 @@ private fun PlayerError(
     }
 }
 
-/** Title, credit and description under the player in portrait. */
+/**
+ * Shown over the last frame while the next video counts down: its thumbnail dimmed behind, the
+ * title, a play button whose ring fills as the seconds run out, and Cancel.
+ */
 @Composable
-private fun VideoDetails(video: Video, modifier: Modifier = Modifier) {
+private fun UpNextCountdown(
+    video: Video,
+    secondsLeft: Int,
+    isFullScreen: Boolean,
+    onPlayNow: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Fills smoothly between the ticks, starting from wherever the countdown already is (e.g. after rotation).
+    val ring = remember(video.id) {
+        Animatable((AUTOPLAY_COUNTDOWN_SECONDS - secondsLeft).toFloat() / AUTOPLAY_COUNTDOWN_SECONDS)
+    }
+    LaunchedEffect(ring) {
+        ring.animateTo(1f, tween(durationMillis = secondsLeft * 1_000, easing = LinearEasing))
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(video.thumbnailRes),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.78f)),
+        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 32.dp),
+        ) {
+            Text(
+                text = "Up next in $secondsLeft",
+                color = Color.White.copy(alpha = 0.75f),
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = video.title,
+                color = Color.White,
+                style = if (isFullScreen) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = video.channel,
+                color = Color.White.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(if (isFullScreen) 20.dp else 12.dp))
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(MediaColors.Glass)
+                    .clickable(role = Role.Button, onClickLabel = "Play ${video.title} now", onClick = onPlayNow)
+                    .drawBehind {
+                        val stroke = 3.dp.toPx()
+                        val inset = stroke / 2
+                        val arcSize = Size(size.width - stroke, size.height - stroke)
+                        drawArc(
+                            color = Color.White.copy(alpha = 0.2f),
+                            startAngle = 0f,
+                            sweepAngle = 360f,
+                            useCenter = false,
+                            topLeft = Offset(inset, inset),
+                            size = arcSize,
+                            style = Stroke(stroke),
+                        )
+                        drawArc(
+                            color = MediaColors.Accent,
+                            startAngle = -90f,
+                            sweepAngle = 360f * ring.value,
+                            useCenter = false,
+                            topLeft = Offset(inset, inset),
+                            size = arcSize,
+                            style = Stroke(stroke, cap = StrokeCap.Round),
+                        )
+                    },
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_play),
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier
+                        .offset(x = 2.dp)
+                        .size(28.dp),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            TextButton(onClick = onCancel) {
+                Text("Cancel", color = Color.White, style = MaterialTheme.typography.labelLarge)
+            }
+        }
+    }
+}
+
+/** Title, credit and description under the player in portrait, then the queue of what plays next. */
+@Composable
+private fun VideoDetails(
+    video: Video,
+    upNext: List<Video>,
+    autoplay: Boolean,
+    onAutoplayChange: (Boolean) -> Unit,
+    onPlay: (Video) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -1083,6 +1268,144 @@ private fun VideoDetails(video: Video, modifier: Modifier = Modifier) {
                 text = video.description,
                 color = MediaColors.OnCanvas,
                 style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+
+        if (upNext.isNotEmpty()) {
+            Spacer(Modifier.height(24.dp))
+            UpNextQueue(
+                videos = upNext,
+                autoplay = autoplay,
+                onAutoplayChange = onAutoplayChange,
+                onPlay = onPlay,
+            )
+        }
+    }
+}
+
+/** "Up next" with the autoplay switch, and the videos still to come in the order they'll play. */
+@Composable
+private fun UpNextQueue(
+    videos: List<Video>,
+    autoplay: Boolean,
+    onAutoplayChange: (Boolean) -> Unit,
+    onPlay: (Video) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "UP NEXT",
+                color = MediaColors.Accent,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.weight(1f),
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .toggleable(value = autoplay, role = Role.Switch, onValueChange = onAutoplayChange)
+                    .padding(start = 10.dp),
+            ) {
+                Text(
+                    text = "Autoplay",
+                    color = MediaColors.Muted,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                Spacer(Modifier.width(8.dp))
+                // The whole row toggles, so the switch itself just shows the value.
+                Switch(
+                    checked = autoplay,
+                    onCheckedChange = null,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MediaColors.Canvas,
+                        checkedTrackColor = MediaColors.Accent,
+                        uncheckedThumbColor = MediaColors.Muted,
+                        uncheckedTrackColor = MediaColors.SurfaceRaised,
+                        uncheckedBorderColor = MediaColors.Hairline,
+                    ),
+                    modifier = Modifier.scale(0.8f),
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        videos.forEachIndexed { index, video ->
+            UpNextRow(
+                video = video,
+                isNext = index == 0 && autoplay,
+                onClick = { onPlay(video) },
+            )
+        }
+    }
+}
+
+private val QueueThumbnailShape = RoundedCornerShape(10.dp)
+
+@Composable
+private fun UpNextRow(
+    video: Video,
+    isNext: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(role = Role.Button, onClickLabel = "Play ${video.title}", onClick = onClick)
+            .padding(vertical = 8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(144.dp)
+                .aspectRatio(16f / 9f)
+                .clip(QueueThumbnailShape)
+                .background(MediaColors.Surface)
+                .border(1.dp, MediaColors.Hairline, QueueThumbnailShape),
+        ) {
+            Image(
+                painter = painterResource(video.thumbnailRes),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Text(
+                text = video.duration,
+                color = MediaColors.OnCanvas,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .padding(horizontal = 4.dp, vertical = 1.dp),
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            if (isNext) {
+                Text(
+                    text = "Plays next",
+                    color = MediaColors.Accent,
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Spacer(Modifier.height(2.dp))
+            }
+            Text(
+                text = video.title,
+                color = MediaColors.OnCanvas,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = video.channel,
+                color = MediaColors.Muted,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

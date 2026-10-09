@@ -1,0 +1,286 @@
+<div align="center">
+
+# 🎬 Android Practice — Compose Videos
+
+**An Instagram-style Reels feed and a YouTube-style floating video player, built entirely with Jetpack Compose and Media3.**
+
+![Kotlin](https://img.shields.io/badge/Kotlin-2.4.20-7F52FF?logo=kotlin&logoColor=white)
+![AGP](https://img.shields.io/badge/AGP-9.4.1-3DDC84?logo=android&logoColor=white)
+![Gradle](https://img.shields.io/badge/Gradle-9.6.0-02303A?logo=gradle&logoColor=white)
+![Compose BOM](https://img.shields.io/badge/Compose%20BOM-2026.02.01-4285F4?logo=jetpackcompose&logoColor=white)
+![Media3](https://img.shields.io/badge/Media3-1.11.1-FF6F00)
+![Min SDK](https://img.shields.io/badge/minSdk-24-brightgreen)
+![Target SDK](https://img.shields.io/badge/targetSdk-37-blue)
+![Architecture](https://img.shields.io/badge/Architecture-MVI%20%2B%20Clean-orange)
+
+</div>
+
+---
+
+## 📖 Table of Contents
+
+- [Features](#-features)
+  - [Reels](#-reels)
+  - [Videos & Floating Player](#-videos--floating-player)
+  - [App-wide](#-app-wide)
+- [Architecture](#-architecture)
+- [Project Structure](#-project-structure)
+- [Tech Stack & Versions](#-tech-stack--versions)
+- [Dependencies](#-dependencies)
+- [Build Variants](#-build-variants)
+- [Getting Started](#-getting-started)
+- [Testing](#-testing)
+- [Media Credits](#-media-credits)
+
+---
+
+## ✨ Features
+
+### 📱 Reels
+
+| Feature | Details |
+|---|---|
+| **Vertical swipe feed** | Full-screen `VerticalPager` of 12 bundled 720×1280 reels with snap-to-page paging. |
+| **Tap to pause / play** | Single tap toggles playback with an animated play/pause indicator. |
+| **Hold gestures** | Hold the **middle** of the video to pause (Instagram), hold the **edges** to play at **2×** (TikTok). |
+| **Playback speed** | Speed button cycles **1× → 1.5× → 2× → 0.5×**. |
+| **Mute / unmute** | One-tap audio toggle shared across reels. |
+| **Scrubbable progress bar** | Drag the progress bar to seek, with a **live thumbnail preview** of the frame above your finger. |
+| **Auto-scroll setting** | Choose between looping the current reel or **moving to the next reel** when it ends. |
+| **Instant swipes (preloading)** | A pooled-`ExoPlayer` system pre-buffers the next **2 reels** on idle players, so swipes start instantly. |
+| **Like & double-tap to like** | Heart button toggles; double-tap only ever likes and plays a heart-burst animation. |
+| **Comments sheet** | Bottom sheet with comments, **threaded replies**, **liking comments**, **deleting your own** comments and **pinned** creator comments. |
+| **Share** | Opens the Android share sheet and bumps the share count. |
+| **⋮ Options menu** | **Not interested** (with *Undo* snackbar) and **Report** with Instagram's list of reasons. |
+| **Haptics** | Tactile feedback on like, double-tap, hold and speed change, and while scrubbing. |
+| **Error handling** | Loading, error + retry states, and a snackbar naming any reel that fails to play. |
+
+### 🎞️ Videos & Floating Player
+
+| Feature | Details |
+|---|---|
+| **Video list** | 16:9 thumbnails with duration badges for four Blender open movies. |
+| **Smooth open animation** | The player slides up over the app using Material 3 *emphasized* easing curves. |
+| **Full player controls** | Play/pause, seek bar and auto-hiding controls (3 s timeout) with gradient scrims. |
+| **In-app floating window** | Drag the player down to shrink it into a **mini floating window** that keeps playing while you browse; drag it to any of the **four corners**, fling to dock, and tap to expand again. |
+| **Picture-in-Picture** | Leaving the app while a video plays continues it in a system **PiP window** with a play/pause action — auto-enter on Android 12+, `onUserLeaveHint` on older versions. |
+| **State survives rotation** | Player position, collapse state and docked corner are saved with a custom `Saver`. |
+
+### 🧭 App-wide
+
+- **Bottom tab bar** (Reels / Videos) that tucks away under the full-screen player and slides back with the mini player.
+- **Type-safe navigation** with `@Serializable` routes.
+- **Edge-to-edge**, dark media theme.
+- **Fully offline** — every clip ships inside `res/raw`, no network needed.
+
+---
+
+## 🏛️ Architecture
+
+The app follows **MVI (Model–View–Intent)** on top of a lightweight **Clean Architecture** split into `data` → `presentation` per feature, wired together with **Hilt**.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                       Composable (View)                      │
+│   collects  StateFlow<State>      sends  onIntent(Intent)    │
+│   collects  Flow<Effect> (one-off: snackbar, share sheet)    │
+└───────────────▲──────────────────────────────┬───────────────┘
+                │ State / Effect               │ Intent
+┌───────────────┴──────────────────────────────▼───────────────┐
+│                    ViewModel (@HiltViewModel)                │
+│   MutableStateFlow<State>  ·  Channel<Effect>  ·  reducer    │
+└───────────────────────────────┬──────────────────────────────┘
+                                │ suspend calls
+┌───────────────────────────────▼──────────────────────────────┐
+│          Repository interface  ←  RepositoryImpl             │
+│            (runs on injected @IoDispatcher)                  │
+└───────────────────────────────┬──────────────────────────────┘
+                                │
+                     Bundled media in res/raw
+```
+
+### Building blocks
+
+| Piece | Role | Example |
+|---|---|---|
+| **State** | Immutable `data class`, the single source of truth for a screen. | `ReelsState`, `VideosState`, `VideoPlayerState` |
+| **Intent** | `sealed interface` of everything the user (or player) can tell the screen. | `ReelsIntent.ToggleLike`, `ReelsIntent.CycleSpeed` |
+| **Effect** | One-off events that must not survive recomposition or rotation, delivered via a `Channel`. | `ReelsEffect.ShowMessage`, `ReelsEffect.ShareReel` |
+| **ViewModel** | Single `onIntent()` entry point that reduces intents into new state with `_state.update { … }`. | `ReelsViewModel`, `VideoPlayerViewModel` |
+| **Repository** | Interface the ViewModel depends on; the implementation can be swapped for a network source later. | `ReelsRepository` / `ReelsRepositoryImpl` |
+| **DI modules** | Hilt `@Module`s bind repositories and provide the qualified IO dispatcher. | `ReelsModule`, `VideosModule`, `DispatchersModule` |
+
+### Key design decisions
+
+- **Unidirectional data flow** — UI never mutates state; it only sends intents.
+- **Player pooling** — `ReelPlayerPool` leases and recycles `ExoPlayer` instances (max 2 idle) instead of creating one per page, and pre-warms upcoming reels.
+- **UI-only state stays in the UI** — gesture/animation state like `PlayerSheetState` (collapse, corner, drag offset) lives in Compose, hoisted to the activity so the tab bar can react to it.
+- **Testable by design** — dispatchers are injected and repositories are interfaces, so ViewModels are unit-tested with fakes.
+
+---
+
+## 🗂️ Project Structure
+
+```
+app/src/main/java/com/nameisjayant/composevideos/
+├── AndroidPracticeApplication.kt      # @HiltAndroidApp
+├── MainActivity.kt                    # Hosts NavHost, bottom bar & floating player
+├── ui/theme/                          # Color, Type, Theme
+└── media/
+    ├── di/DispatchersModule.kt        # @IoDispatcher qualifier
+    ├── navigation/                    # MediaRoute, MediaNavHost, MediaBottomBar, MediaTransitions
+    ├── ui/MediaTheme.kt
+    ├── reels/
+    │   ├── data/                      # Reel, ReelComment, ReelsRepository
+    │   ├── di/ReelsModule.kt
+    │   └── presentation/              # ReelsContract, ReelsViewModel, ReelsScreen,
+    │                                  # ReelPlayer (pool), ReelScrubber, ReelComments, ReelOptions
+    └── videos/
+        ├── data/                      # Video, VideosRepository
+        ├── di/VideosModule.kt
+        └── presentation/              # VideosContract, VideosViewModel, VideosScreen,
+                                       # VideoPlayerViewModel, VideoPlayerOverlay,
+                                       # PlayerSheetState, VideoPictureInPicture
+```
+
+---
+
+## 🛠️ Tech Stack & Versions
+
+| Tool | Version |
+|---|---|
+| **Android Studio** | 2026.1.4 (build `AI-261.26222.65`) |
+| **Kotlin** | 2.4.20 |
+| **Android Gradle Plugin (AGP)** | 9.4.1 |
+| **Gradle** | 9.6.0 |
+| **KSP** | 2.3.12 |
+| **Java compatibility** | 11 |
+| **compileSdk / targetSdk** | 37 |
+| **minSdk** | 24 (Android 7.0) |
+| **UI** | Jetpack Compose + Material 3 |
+| **DI** | Hilt (Dagger) |
+| **Async** | Kotlin Coroutines & Flow |
+| **Media** | AndroidX Media3 ExoPlayer + Media3 UI Compose |
+| **Navigation** | Navigation Compose with type-safe `@Serializable` routes |
+
+---
+
+## 📦 Dependencies
+
+All versions are managed in [`gradle/libs.versions.toml`](gradle/libs.versions.toml).
+
+### Gradle plugins
+
+| Plugin | ID | Version |
+|---|---|---|
+| Android Application | `com.android.application` | 9.4.1 |
+| Kotlin Compose Compiler | `org.jetbrains.kotlin.plugin.compose` | 2.4.20 |
+| Kotlin Serialization | `org.jetbrains.kotlin.plugin.serialization` | 2.4.20 |
+| KSP | `com.google.devtools.ksp` | 2.3.12 |
+| Hilt | `com.google.dagger.hilt.android` | 2.60.1 |
+| Foojay Toolchain Resolver | `org.gradle.toolchains.foojay-resolver-convention` | 1.0.0 |
+
+### Libraries
+
+| Category | Library | Version |
+|---|---|---|
+| **Core** | `androidx.core:core-ktx` | 1.19.1 |
+| | `androidx.activity:activity-compose` | 1.13.0 |
+| **Compose** | `androidx.compose:compose-bom` | 2026.02.01 |
+| | `androidx.compose.ui:ui`, `ui-graphics`, `ui-tooling-preview` | via BOM |
+| | `androidx.compose.material3:material3` | via BOM |
+| **Lifecycle** | `androidx.lifecycle:lifecycle-runtime-ktx` | 2.11.0 |
+| | `androidx.lifecycle:lifecycle-runtime-compose` | 2.11.0 |
+| | `androidx.lifecycle:lifecycle-viewmodel-compose` | 2.11.0 |
+| **Navigation** | `androidx.navigation:navigation-compose` | 2.10.2 |
+| | `org.jetbrains.kotlinx:kotlinx-serialization-json` | 1.11.0 |
+| **Dependency Injection** | `com.google.dagger:hilt-android` | 2.60.1 |
+| | `com.google.dagger:hilt-compiler` (KSP) | 2.60.1 |
+| | `androidx.hilt:hilt-lifecycle-viewmodel-compose` | 1.4.0 |
+| **Coroutines** | `org.jetbrains.kotlinx:kotlinx-coroutines-android` | 1.11.0 |
+| **Media** | `androidx.media3:media3-exoplayer` | 1.11.1 |
+| | `androidx.media3:media3-ui-compose` | 1.11.1 |
+
+### Testing
+
+| Library | Version |
+|---|---|
+| `junit:junit` | 4.13.2 |
+| `org.jetbrains.kotlinx:kotlinx-coroutines-test` | 1.11.0 |
+| `androidx.test.ext:junit` | 1.3.0 |
+| `androidx.test.espresso:espresso-core` | 3.7.0 |
+| `androidx.compose.ui:ui-test-junit4` | via BOM |
+| `androidx.compose.ui:ui-test-manifest` *(debug)* | via BOM |
+| `androidx.compose.ui:ui-tooling` *(debug)* | via BOM |
+
+---
+
+## 🧪 Build Variants
+
+The app has an `environment` flavor dimension:
+
+| Flavor | Application ID | App name | Notes |
+|---|---|---|---|
+| **beta** | `com.nameisjayant.composevideos.beta` | Android Practice Beta | `-beta` version suffix; installs side-by-side with prod |
+| **prod** | `com.nameisjayant.composevideos` | Android Practice | Production build |
+
+Combined with `debug` / `release` build types → `betaDebug`, `betaRelease`, `prodDebug`, `prodRelease`.
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Android Studio 2026.1.4** or newer
+- **JDK 17+** (bundled JBR from Android Studio works)
+- Android SDK **Platform 37**
+
+### Clone & run
+
+```bash
+git clone <repo-url>
+cd AndroidPractice
+
+# Build & install the beta debug build on a connected device / emulator
+./gradlew installBetaDebug
+
+# Or the production debug build
+./gradlew installProdDebug
+```
+
+Or simply open the project in Android Studio, pick a build variant from **Build Variants**, and hit ▶ **Run**.
+
+> 💡 Picture-in-Picture requires a device or emulator that supports it (Android 8.0+).
+
+---
+
+## ✅ Testing
+
+ViewModels are covered by JVM unit tests using fake repositories and `kotlinx-coroutines-test`:
+
+- **`ReelsViewModelTest`** — loading & retry, page settling, hold gestures, mute, playback errors, like vs. double-tap, comments, replies, comment likes, deleting only your own comments, share, not interested / undo and report.
+- **`VideosViewModelTest`** — loading and error-retry.
+
+```bash
+./gradlew testBetaDebugUnitTest
+```
+
+---
+
+## 🎥 Media Credits
+
+All bundled clips are cut from **Blender Foundation open movies**, licensed under [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). The channel credit is kept visible in-app as the license requires.
+
+- **Big Buck Bunny** (2008) — © Blender Foundation | peach.blender.org
+- **Sintel** (2010) — © Blender Foundation | durian.blender.org
+- **Tears of Steel** (2012) — © Blender Foundation | mango.blender.org
+- **Elephants Dream** (2006) — © Blender Foundation / Netherlands Media Art Institute | orange.blender.org
+
+---
+
+<div align="center">
+
+Made with ❤️ and Jetpack Compose by **[Jayant Kumar](https://github.com/name-is-jayant)**
+
+</div>

@@ -17,8 +17,32 @@
 
 ---
 
+## 🎥 Demo
+
+<div align="center">
+
+<a href="docs/demo.mp4"><img src="docs/demo-preview.gif" width="270" alt="Demo preview: scrubbing and liking a reel, double-tap seek, seek-bar previews, the floating window and picture-in-picture"></a>
+
+**[▶ Watch the full demo (2:52)](docs/demo.mp4)**, recorded on a Pixel 8
+
+</div>
+
+The full video walks through every feature, with a caption for each:
+
+| Part | What's shown |
+|---|---|
+| **Reels** | Swipe feed · tap to pause · hold middle to pause / edges for 2× · speed button · mute · scrub with thumbnail · double-tap like · comments · share · ⋮ menu · preloaded swipes |
+| **Videos** | Slide-up player · double-tap ±10 s · quality menu (480p) · playback speed · timestamp links · chapter seek bar with frame previews |
+| **Full screen** | Full-screen button · brightness / volume swipes · swipe to seek · screen lock and unlock |
+| **Autoplay & floating** | Autoplay to the next video · Up Next countdown · floating mini window docked to a corner · picture-in-picture on Home |
+
+> Cast to TV isn't in the recording (no Cast device was on the network). Full-screen clips appear as a landscape strip because Android's screen recorder keeps a portrait frame.
+
+---
+
 ## 📖 Table of Contents
 
+- [Demo](#-demo)
 - [Features](#-features)
   - [Reels](#-reels)
   - [Videos & Floating Player](#-videos--floating-player)

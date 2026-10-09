@@ -10,6 +10,10 @@ sealed interface MediaRoute {
 
     @Serializable
     data object Videos : MediaRoute
+
+    /** Full player for one video; not a tab, so the bottom bar hides while it's open. */
+    @Serializable
+    data class VideoPlayer(val videoId: String) : MediaRoute
 }
 
 enum class MediaTab(

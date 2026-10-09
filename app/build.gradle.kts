@@ -7,13 +7,13 @@ plugins {
 }
 
 android {
-    namespace = "com.nameisjayant.androidpractice"
+    namespace = "com.nameisjayant.composevideos"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "com.nameisjayant.androidpractice"
+        applicationId = "com.nameisjayant.composevideos"
         minSdk = 24
         targetSdk = 37
         versionCode = 1

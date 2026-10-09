@@ -35,6 +35,8 @@ data class VideoPlayerState(
     val autoplay: Boolean = true,
     /** Seconds left before the next video starts, while the end-of-video countdown runs; else null. */
     val autoplayCountdown: Int? = null,
+    /** Whether the video's colours glow softly onto the page around it. Kept like autoplay. */
+    val ambientMode: Boolean = true,
     /** The TV the video is playing on, while casting; null while it plays on the phone. */
     val castDevice: String? = null,
 )
@@ -52,6 +54,7 @@ sealed interface VideoPlayerIntent {
     /** [height] null goes back to Auto. */
     data class SetQuality(val height: Int?) : VideoPlayerIntent
     data class SetAutoplay(val enabled: Boolean) : VideoPlayerIntent
+    data class SetAmbientMode(val enabled: Boolean) : VideoPlayerIntent
     /** Stops the end-of-video countdown, leaving the video on its last frame; autoplay stays on. */
     data object CancelAutoplay : VideoPlayerIntent
     /** Jumps to [positionMs] and plays from there, e.g. from a timestamp in the description. */

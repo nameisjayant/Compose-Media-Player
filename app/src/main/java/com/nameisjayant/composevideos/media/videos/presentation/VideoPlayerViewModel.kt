@@ -113,6 +113,7 @@ class VideoPlayerViewModel @Inject constructor(
         })
         updateCastDevice()
         savedStateHandle.get<Boolean>(KEY_AUTOPLAY)?.let { autoplay -> _state.update { it.copy(autoplay = autoplay) } }
+        savedStateHandle.get<Boolean>(KEY_AMBIENT_MODE)?.let { ambient -> _state.update { it.copy(ambientMode = ambient) } }
         // Speed and quality carry on from where they were set, even after process death.
         savedStateHandle.get<Float>(KEY_SPEED)?.let(::setPlaybackSpeed)
         savedStateHandle.get<Int>(KEY_QUALITY)?.let(::setQuality)
@@ -138,6 +139,7 @@ class VideoPlayerViewModel @Inject constructor(
             is VideoPlayerIntent.SetPlaybackSpeed -> setPlaybackSpeed(intent.speed)
             is VideoPlayerIntent.SetQuality -> setQuality(intent.height)
             is VideoPlayerIntent.SetAutoplay -> setAutoplay(intent.enabled)
+            is VideoPlayerIntent.SetAmbientMode -> setAmbientMode(intent.enabled)
             VideoPlayerIntent.CancelAutoplay -> cancelCountdown()
             is VideoPlayerIntent.SeekTo -> seekTo(intent.positionMs)
         }
@@ -206,6 +208,7 @@ class VideoPlayerViewModel @Inject constructor(
                 playbackSpeed = it.playbackSpeed,
                 maxQuality = it.maxQuality,
                 autoplay = it.autoplay,
+                ambientMode = it.ambientMode,
                 // Closing the player stops the video on the TV but stays connected to it, like YouTube.
                 castDevice = it.castDevice,
             )
@@ -244,6 +247,11 @@ class VideoPlayerViewModel @Inject constructor(
         savedStateHandle[KEY_AUTOPLAY] = enabled
         _state.update { it.copy(autoplay = enabled) }
         if (!enabled) cancelCountdown() else if (player.playbackState == Player.STATE_ENDED) startCountdown()
+    }
+
+    private fun setAmbientMode(enabled: Boolean) {
+        savedStateHandle[KEY_AMBIENT_MODE] = enabled
+        _state.update { it.copy(ambientMode = enabled) }
     }
 
     /** Ticks [VideoPlayerState.autoplayCountdown] down to zero, then plays the first video up next. */
@@ -342,5 +350,6 @@ class VideoPlayerViewModel @Inject constructor(
         const val KEY_SPEED = "playbackSpeed"
         const val KEY_QUALITY = "maxQuality"
         const val KEY_AUTOPLAY = "autoplay"
+        const val KEY_AMBIENT_MODE = "ambientMode"
     }
 }

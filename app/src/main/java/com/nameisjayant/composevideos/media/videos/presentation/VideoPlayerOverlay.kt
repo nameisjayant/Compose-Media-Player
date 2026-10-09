@@ -216,6 +216,12 @@ fun VideoPlayerOverlay(
     // Picked by pinching in full screen: crop the video to cover the screen rather than fit it.
     var zoomedToFill by rememberSaveable { mutableStateOf(false) }
     val fullScreen = rememberFullScreenController()
+    // Only the portrait page has room around the video to glow onto.
+    val ambientFrame by rememberAmbientFrame(
+        player = player,
+        seekPreviews = { seekPreviews.value },
+        enabled = state.ambientMode && state.isOpen && !videoOnly && !isMini,
+    )
 
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
     val topInset = WindowInsets.statusBars.getTop(density)
@@ -397,6 +403,29 @@ fun VideoPlayerOverlay(
                 },
         )
 
+        if (!videoOnly && !isMini && state.ambientMode) {
+            AmbientGlow(
+                frame = ambientFrame,
+                modifier = Modifier
+                    .offset { geometry.expanded.topLeft.round() }
+                    .layout { measurable, _ ->
+                        val video = geometry.expanded
+                        val placeable = measurable.measure(
+                            Constraints.fixed(
+                                video.width.roundToInt().coerceAtLeast(0),
+                                (video.height * (1f + AMBIENT_REACH)).roundToInt().coerceAtLeast(0),
+                            ),
+                        )
+                        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                    }
+                    .graphicsLayer {
+                        // Fades with the page under it as the player shrinks, and slides with it.
+                        alpha = (1f - 2f * collapse.value).coerceAtLeast(0f)
+                        translationY = offscreen.value * geometry.height + collapse.value * geometry.dragTravel
+                    },
+            )
+        }
+
         if (!videoOnly && !isMini) {
             state.video?.let { video ->
                 VideoDetails(
@@ -510,6 +539,7 @@ fun VideoPlayerOverlay(
             speed = state.playbackSpeed,
             maxQuality = state.maxQuality,
             qualities = qualities,
+            ambientMode = state.ambientMode,
             onSpeed = {
                 viewModel.onIntent(VideoPlayerIntent.SetPlaybackSpeed(it))
                 settingsOpen = false
@@ -518,6 +548,7 @@ fun VideoPlayerOverlay(
                 viewModel.onIntent(VideoPlayerIntent.SetQuality(it))
                 settingsOpen = false
             },
+            onAmbientModeChange = { viewModel.onIntent(VideoPlayerIntent.SetAmbientMode(it)) },
             onDismiss = { settingsOpen = false },
         )
     }

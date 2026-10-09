@@ -28,11 +28,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -47,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
@@ -71,8 +75,9 @@ private enum class SettingsPage { Main, Quality, Speed }
 class VideoQualities(val available: List<Int>, val playing: Int?)
 
 /**
- * The quality and speed menu, sliding up from the bottom of the player. Picking an option applies
- * it and closes the menu; tapping outside or Back closes it too.
+ * The quality, speed and ambient mode menu, sliding up from the bottom of the player. Picking an
+ * option applies it and closes the menu; tapping outside or Back closes it too. Flipping ambient
+ * mode leaves it open, like any switch.
  *
  * @param maxQuality the height the user capped the video at, or null for Auto.
  */
@@ -82,8 +87,10 @@ fun PlaybackSettingsPanel(
     speed: Float,
     maxQuality: Int?,
     qualities: VideoQualities,
+    ambientMode: Boolean,
     onSpeed: (Float) -> Unit,
     onQuality: (Int?) -> Unit,
+    onAmbientModeChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -152,6 +159,12 @@ fun PlaybackSettingsPanel(
                                     value = speedLabel(speed),
                                     onClick = { page = SettingsPage.Speed },
                                 )
+                                ToggleRow(
+                                    icon = R.drawable.ic_ambient,
+                                    label = "Ambient mode",
+                                    checked = ambientMode,
+                                    onCheckedChange = onAmbientModeChange,
+                                )
                             }
 
                             SettingsPage.Quality -> {
@@ -219,6 +232,45 @@ private fun MenuRow(icon: Int, label: String, value: String, onClick: () -> Unit
             modifier = Modifier
                 .padding(start = 4.dp)
                 .size(20.dp),
+        )
+    }
+}
+
+/** A main-page row that switches something on or off in place, rather than opening a page. */
+@Composable
+private fun ToggleRow(icon: Int, label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
+            .padding(horizontal = 20.dp, vertical = 6.dp),
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = null,
+            tint = MediaColors.OnCanvas,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = label,
+            color = MediaColors.OnCanvas,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+        )
+        // The whole row toggles, so the switch itself just shows the value.
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MediaColors.Canvas,
+                checkedTrackColor = MediaColors.Accent,
+                uncheckedThumbColor = MediaColors.Muted,
+                uncheckedTrackColor = MediaColors.SurfaceRaised,
+                uncheckedBorderColor = MediaColors.Hairline,
+            ),
+            modifier = Modifier.scale(0.8f),
         )
     }
 }

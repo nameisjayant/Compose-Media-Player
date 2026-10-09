@@ -73,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -162,6 +163,9 @@ private val TopScrim = Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.
 private val PreviewWidth = 128.dp
 private val FullScreenPreviewWidth = 192.dp
 
+/** Settling into fit or fill after a pinch, or when leaving full screen. */
+private val ZoomSpec = spring<Float>(stiffness = Spring.StiffnessMediumLow)
+
 private val BottomScrim = Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f)))
 
 /**
@@ -209,6 +213,8 @@ fun VideoPlayerOverlay(
     val isLocked = lockRequested && isLandscape && !isInPip && !isMini
     // Picked by swiping the left edge in full screen; null follows the system brightness.
     var brightness by rememberSaveable { mutableStateOf<Float?>(null) }
+    // Picked by pinching in full screen: crop the video to cover the screen rather than fit it.
+    var zoomedToFill by rememberSaveable { mutableStateOf(false) }
     val fullScreen = rememberFullScreenController()
 
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
@@ -238,6 +244,7 @@ fun VideoPlayerOverlay(
         offscreen.animateTo(1f, MediaMotion.exitSpec())
         lockRequested = false
         brightness = null
+        zoomedToFill = false
         viewModel.onIntent(VideoPlayerIntent.Close)
     }
 
@@ -292,8 +299,12 @@ fun VideoPlayerOverlay(
     // The swiped brightness only lights the full-screen player; the floating windows and the rest
     // of the app keep the system's, and leaving full screen forgets it.
     WindowBrightnessEffect(level = brightness.takeIf { isLandscape && !isInPip && !isMini })
+    // Zoom too is for full screen only; back in portrait the next full screen starts fitted again.
     LaunchedEffect(isLandscape) {
-        if (!isLandscape) brightness = null
+        if (!isLandscape) {
+            brightness = null
+            zoomedToFill = false
+        }
     }
 
     // Going home (or swiping up) mid-video keeps it playing in a system floating window.
@@ -445,6 +456,8 @@ fun VideoPlayerOverlay(
                 isLocked = isLocked,
                 brightness = brightness,
                 onBrightnessChange = { brightness = it },
+                zoomedToFill = zoomedToFill,
+                onZoomedToFillChange = { zoomedToFill = it },
                 // The back arrow does what Back does: portrait first, then close.
                 onBack = { if (isLandscape) fullScreen.setFullScreen(false) else onClose() },
                 onToggleFullScreen = { fullScreen.setFullScreen(!isLandscape) },
@@ -702,6 +715,8 @@ private fun VideoSurface(
     isLocked: Boolean,
     brightness: Float?,
     onBrightnessChange: (Float) -> Unit,
+    zoomedToFill: Boolean,
+    onZoomedToFillChange: (Boolean) -> Unit,
     onBack: () -> Unit,
     onToggleFullScreen: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -771,10 +786,50 @@ private fun VideoSurface(
     swipe.onStart = { controlsVisible = false }
     swipe.onLimit = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) }
 
+    // Fit or fill, as a 0–1 blend between the two that follows the fingers mid-pinch. Nothing to
+    // zoom on the phone while it's casting, and the floating windows always fit.
+    val scope = rememberCoroutineScope()
+    val videoAspectRatio by rememberVideoAspectRatio(player)
+    var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
+    // Read through state, as the pinch's gesture handler outlives this composition.
+    val maxZoomScale by remember { derivedStateOf { fillScale(surfaceSize, videoAspectRatio) } }
+    val canZoom = isFullScreen && showChrome && state.castDevice == null
+    val zoom = remember { Animatable(0f) }
+    var pinching by remember { mutableStateOf(false) }
+    var pinchStartScale by remember { mutableFloatStateOf(1f) }
+    var zoomSwitches by remember { mutableIntStateOf(0) }
+    LaunchedEffect(canZoom && zoomedToFill, pinching) {
+        if (!pinching) zoom.animateTo(if (canZoom && zoomedToFill) 1f else 0f, ZoomSpec)
+    }
+    fun switchZoom(fill: Boolean) {
+        onZoomedToFillChange(fill)
+        zoomSwitches++
+        haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+    }
+
     Box(
         // Picture-in-picture and the floating window handle their own taps (and have no room for
         // these controls).
         modifier = modifier
+            .pinchToZoom(
+                enabled = canZoom && !isLocked,
+                onStart = {
+                    pinching = true
+                    pinchStartScale = 1f + (maxZoomScale - 1f) * zoom.value
+                    controlsVisible = false
+                },
+                onZoom = { amount ->
+                    // Between fit and fill, never past either; a video the screen's shape doesn't move.
+                    if (maxZoomScale > 1f) {
+                        val scale = (pinchStartScale * amount).coerceIn(1f, maxZoomScale)
+                        scope.launch(start = CoroutineStart.UNDISPATCHED) { zoom.snapTo((scale - 1f) / (maxZoomScale - 1f)) }
+                    }
+                },
+                onEnd = { amount ->
+                    pinchTarget(amount)?.let(::switchZoom)
+                    pinching = false
+                },
+            )
             .swipeToAdjust(enabled = isFullScreen && showChrome && !isLocked, state = swipe)
             .doubleTapToSeek(
                 enabled = showChrome && !isLocked,
@@ -810,11 +865,19 @@ private fun VideoSurface(
                     toggleControls()
                     true
                 }
-                if (canSeek) {
-                    customActions = listOf(
-                        CustomAccessibilityAction("Rewind 10 seconds") { seek(SeekSide.Back); true },
-                        CustomAccessibilityAction("Forward 10 seconds") { seek(SeekSide.Forward); true },
-                    )
+                customActions = buildList {
+                    if (canSeek) {
+                        add(CustomAccessibilityAction("Rewind 10 seconds") { seek(SeekSide.Back); true })
+                        add(CustomAccessibilityAction("Forward 10 seconds") { seek(SeekSide.Forward); true })
+                    }
+                    if (canZoom) {
+                        add(
+                            CustomAccessibilityAction(if (zoomedToFill) "Fit to screen" else "Zoom to fill") {
+                                switchZoom(!zoomedToFill)
+                                true
+                            },
+                        )
+                    }
                 }
             },
     ) {
@@ -824,7 +887,15 @@ private fun VideoSurface(
             surfaceType = SURFACE_TYPE_TEXTURE_VIEW,
             contentScale = ContentScale.Fit,
             shutter = { Box(Modifier.fillMaxSize().background(Color.Black)) },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .onSizeChanged { surfaceSize = it }
+                .clipToBounds()
+                .graphicsLayer {
+                    val scale = 1f + (maxZoomScale - 1f) * zoom.value
+                    scaleX = scale
+                    scaleY = scale
+                },
         )
         state.castDevice?.let { device ->
             CastingBackdrop(
@@ -881,6 +952,7 @@ private fun VideoSurface(
 
         if (showChrome && !isLocked) SeekFeedback(seekFeedback)
         if (isFullScreen && showChrome && !isLocked) SwipeAdjustFeedback(swipe, chapters)
+        ZoomModePill(zoomedToFill = zoomedToFill, switches = zoomSwitches, enabled = canZoom && !isLocked)
 
         // Over the replay controls; cancelling it leaves them to replay. A locked screen still
         // counts down, it just can't be tapped.

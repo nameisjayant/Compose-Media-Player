@@ -35,6 +35,8 @@ data class VideoPlayerState(
     val autoplay: Boolean = true,
     /** Seconds left before the next video starts, while the end-of-video countdown runs; else null. */
     val autoplayCountdown: Int? = null,
+    /** The TV the video is playing on, while casting; null while it plays on the phone. */
+    val castDevice: String? = null,
 )
 
 sealed interface VideoPlayerIntent {

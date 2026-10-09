@@ -5,17 +5,22 @@ import androidx.annotation.OptIn
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.cast.Cast
+import androidx.media3.cast.CastPlayer
+import androidx.media3.cast.RemoteCastPlayer
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.MediaItem
+import androidx.media3.common.DeviceInfo
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.RawResourceDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import com.nameisjayant.composevideos.media.videos.data.CastMediaServer
 import com.nameisjayant.composevideos.media.videos.data.SeekPreviewSource
 import com.nameisjayant.composevideos.media.videos.data.SeekPreviews
 import com.nameisjayant.composevideos.media.videos.data.Video
+import com.nameisjayant.composevideos.media.videos.data.VideoCastMediaItemConverter
 import com.nameisjayant.composevideos.media.videos.data.VideosRepository
+import com.nameisjayant.composevideos.media.videos.data.toMediaItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -35,6 +40,10 @@ internal const val AUTOPLAY_COUNTDOWN_SECONDS = 5
  * Owns the [player] for the whole activity, so the video keeps playing in the floating window
  * while the user moves around the app, and anything that recreates the activity carries on from
  * the same spot instead of rebuffering from the start.
+ *
+ * The [player] is a [CastPlayer]: it plays on the phone's ExoPlayer until the user picks a TV with
+ * the Cast button, then moves the video, position and play/pause over to the TV, and back again
+ * when the session ends. The rest of the app just talks to one [Player] either way.
  */
 @OptIn(UnstableApi::class)
 @HiltViewModel
@@ -42,7 +51,8 @@ class VideoPlayerViewModel @Inject constructor(
     private val savedStateHandle: SavedStateHandle,
     private val repository: VideosRepository,
     private val seekPreviewSource: SeekPreviewSource,
-    @ApplicationContext context: Context,
+    private val castMediaServer: CastMediaServer,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(VideoPlayerState())
@@ -56,7 +66,7 @@ class VideoPlayerViewModel @Inject constructor(
      */
     val seekPreviews: StateFlow<SeekPreviews?> = _seekPreviews.asStateFlow()
 
-    val player: Player = ExoPlayer.Builder(context)
+    private val localPlayer: ExoPlayer = ExoPlayer.Builder(context)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -66,6 +76,15 @@ class VideoPlayerViewModel @Inject constructor(
         )
         // Pause rather than blast audio from the speaker when headphones are unplugged.
         .setHandleAudioBecomingNoisy(true)
+        .build()
+
+    val player: Player = CastPlayer.Builder(context)
+        .setLocalPlayer(localPlayer)
+        .setRemotePlayer(
+            RemoteCastPlayer.Builder(context)
+                .setMediaItemConverter(VideoCastMediaItemConverter(castMediaServer))
+                .build(),
+        )
         .build()
 
     /** Whether to (re)start playback the next time the app is in the foreground. */
@@ -89,7 +108,10 @@ class VideoPlayerViewModel @Inject constructor(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) startCountdown() else cancelCountdown()
             }
+
+            override fun onDeviceInfoChanged(deviceInfo: DeviceInfo) = updateCastDevice()
         })
+        updateCastDevice()
         savedStateHandle.get<Boolean>(KEY_AUTOPLAY)?.let { autoplay -> _state.update { it.copy(autoplay = autoplay) } }
         // Speed and quality carry on from where they were set, even after process death.
         savedStateHandle.get<Float>(KEY_SPEED)?.let(::setPlaybackSpeed)
@@ -131,6 +153,8 @@ class VideoPlayerViewModel @Inject constructor(
 
     /** Not called on rotation, so playback (or a pause) carries straight across. */
     fun onBackground() {
+        // The TV carries on with the phone in a pocket, up-next countdown and all.
+        if (_state.value.castDevice != null) return
         resumeOnForeground = player.playWhenReady
         player.pause()
         countdownOnForeground = countdownJob?.isActive == true
@@ -182,6 +206,8 @@ class VideoPlayerViewModel @Inject constructor(
                 playbackSpeed = it.playbackSpeed,
                 maxQuality = it.maxQuality,
                 autoplay = it.autoplay,
+                // Closing the player stops the video on the TV but stays connected to it, like YouTube.
+                castDevice = it.castDevice,
             )
         }
     }
@@ -204,10 +230,11 @@ class VideoPlayerViewModel @Inject constructor(
     /**
      * Caps the video at [height] rather than pinning one track, so the choice carries over to the
      * next video, whose tracks are different. Auto lifts the cap and the player picks the best.
+     * Set on the phone's player, so it holds while casting (where the TV picks) and after.
      */
     private fun setQuality(height: Int?) {
         savedStateHandle[KEY_QUALITY] = height
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+        localPlayer.trackSelectionParameters = localPlayer.trackSelectionParameters.buildUpon()
             .apply { if (height == null) clearVideoSizeConstraints() else setMaxVideoSize(Int.MAX_VALUE, height) }
             .build()
         _state.update { it.copy(maxQuality = height) }
@@ -257,14 +284,7 @@ class VideoPlayerViewModel @Inject constructor(
                 val index = videos.indexOfFirst { it.id == video.id }
                 // Starting just after this one and wrapping round, the same order as next.
                 val upNext = if (index < 0) emptyList() else (1 until videos.size).map { videos[(index + it) % videos.size] }
-                if (player.currentMediaItem?.mediaId != video.id) {
-                    player.setMediaItem(
-                        MediaItem.Builder()
-                            .setMediaId(video.id)
-                            .setUri(RawResourceDataSource.buildRawResourceUri(video.videoRes))
-                            .build(),
-                    )
-                }
+                if (player.currentMediaItem?.mediaId != video.id) player.setMediaItem(video.toMediaItem())
                 // Also recovers from a playback error when retrying.
                 player.prepare()
                 _state.update { it.copy(isLoading = false, video = video, upNext = upNext) }
@@ -299,8 +319,22 @@ class VideoPlayerViewModel @Inject constructor(
         _seekPreviews.value = null
     }
 
+    /** Names the TV in [VideoPlayerState.castDevice] while casting, and stops serving it videos after. */
+    private fun updateCastDevice() {
+        val remote = player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE
+        val name = if (remote) {
+            Cast.getSingletonInstance(context).currentCastSession?.castDevice?.friendlyName ?: "TV"
+        } else {
+            castMediaServer.stop()
+            null
+        }
+        _state.update { it.copy(castDevice = name) }
+    }
+
     override fun onCleared() {
         player.release()
+        localPlayer.release()
+        castMediaServer.stop()
     }
 
     private companion object {

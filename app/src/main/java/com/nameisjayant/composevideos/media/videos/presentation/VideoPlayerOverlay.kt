@@ -298,7 +298,8 @@ fun VideoPlayerOverlay(
 
     // Going home (or swiping up) mid-video keeps it playing in a system floating window.
     PictureInPictureEffect(
-        autoEnter = !playPause.showPlay && state.error == null,
+        // Not while casting: the video is on the TV, and leaving the app leaves it there.
+        autoEnter = !playPause.showPlay && state.error == null && state.castDevice == null,
         isPlaying = !playPause.showPlay,
         videoAspectRatio = videoAspectRatio,
         videoBounds = if (isMini) geometry.mini(sheetState.corner) else geometry.expanded,
@@ -724,7 +725,8 @@ private fun VideoSurface(
         }
     }
 
-    KeepScreenOnEffect(keepOn = !playPause.showPlay)
+    // Nothing to watch on the phone while it's on the TV.
+    KeepScreenOnEffect(keepOn = !playPause.showPlay && state.castDevice == null)
 
     // While locked, a tap only brings up the unlock button for a moment.
     var unlockHintVisible by remember { mutableStateOf(false) }
@@ -824,6 +826,14 @@ private fun VideoSurface(
             shutter = { Box(Modifier.fillMaxSize().background(Color.Black)) },
             modifier = Modifier.fillMaxSize(),
         )
+        state.castDevice?.let { device ->
+            CastingBackdrop(
+                video = state.video,
+                device = device,
+                showInfo = showChrome && !controlsVisible && !isLocked && state.autoplayCountdown == null,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         when {
             !showChrome && (state.error != null || state.isLoading) -> Unit
@@ -944,7 +954,11 @@ private fun VideoSurface(
                 } else {
                     Spacer(Modifier.weight(1f))
                 }
-                // Lock and quality/speed; come and go with the controls, like on YouTube.
+                // Cast, lock and quality/speed; come and go with the controls, like on YouTube. Cast
+                // stays even on an error, so a TV that can't play the video can be let go of.
+                AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut()) {
+                    CastButton()
+                }
                 AnimatedVisibility(
                     visible = isFullScreen && controlsVisible && state.error == null && !state.isLoading,
                     enter = fadeIn(),

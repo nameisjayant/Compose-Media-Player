@@ -78,6 +78,8 @@ dependencies {
     // Media: ExoPlayer + Compose video surface for the bundled reels
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui.compose)
+    // Cast to TV: CastPlayer hands playback between ExoPlayer and a Cast device, plus the Cast button
+    implementation(libs.androidx.media3.cast)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

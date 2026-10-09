@@ -4,10 +4,10 @@
 
 **An Instagram-style Reels feed and a YouTube-style floating video player, built entirely with Jetpack Compose and Media3.**
 
-![Kotlin](https://img.shields.io/badge/Kotlin-2.4.20-7F52FF?logo=kotlin&logoColor=white)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.4.21-7F52FF?logo=kotlin&logoColor=white)
 ![AGP](https://img.shields.io/badge/AGP-9.4.1-3DDC84?logo=android&logoColor=white)
 ![Gradle](https://img.shields.io/badge/Gradle-9.6.0-02303A?logo=gradle&logoColor=white)
-![Compose BOM](https://img.shields.io/badge/Compose%20BOM-2026.02.01-4285F4?logo=jetpackcompose&logoColor=white)
+![Compose BOM](https://img.shields.io/badge/Compose%20BOM-2026.09.00-4285F4?logo=jetpackcompose&logoColor=white)
 ![Media3](https://img.shields.io/badge/Media3-1.11.1-FF6F00)
 ![Min SDK](https://img.shields.io/badge/minSdk-24-brightgreen)
 ![Target SDK](https://img.shields.io/badge/targetSdk-37-blue)
@@ -71,6 +71,7 @@
 | **Seek-bar previews** | While you drag the seek bar, a **thumbnail of the frame under your finger** floats above the thumb with the time beneath it, kept inside the bar's ends and larger in full screen. Frames are decoded on-device from the bundled clip with `MediaMetadataRetriever` at the **exact frame** (the clips' keyframes are up to 10 s apart, so seeking to the nearest keyframe would show the wrong scene): one per second, up to 60 per video, 256 px wide. They decode in the background as soon as a video loads, **every eighth one first and then the gaps**, so the whole bar has a rough preview within moments; until a frame is ready the closest decoded one is shown. The strip lives in `VideoPlayerViewModel`, so it survives rotation, and is dropped when the video changes or the player closes. |
 | **Up Next & autoplay** | Under the description, an **Up next** queue lists the rest of the videos in the order they'll play (wrapping round, like *next*), each with a thumbnail, duration and title; tap one to play it. An **Autoplay** switch sits in the queue header and survives process death. When a video ends with autoplay on, the next video's thumbnail fades in over the player with **Up next in 5**, a play button whose ring fills over the **5-second countdown**, and **Cancel**. Play starts it now; Cancel (or replaying / seeking) stops the countdown and brings the replay controls back. The floating window shows a small **Next in N** pill, and the countdown stops while the app is in the background and starts over when you return. |
 | **In-app floating window** | Drag the player down to shrink it into a **mini floating window** that keeps playing while you browse; drag it to any of the **four corners**, fling to dock, and tap to expand again. **Previous / next** buttons skip between videos without leaving the window. An **expand** button (top left) opens it back up to the full player. |
+| **Cast to TV** | A **Cast** button sits in the player's top bar (portrait and full screen) and lists the Chromecasts and Cast-enabled TVs on your Wi-Fi. Pick one and the video moves to the TV **at the same spot, playing or paused as it was**, through Media3's `CastPlayer`, which wraps the phone's `ExoPlayer` and hands playback over in both directions, so the rest of the player keeps talking to one `Player`. The player shows the video's dimmed thumbnail and **Casting to *Living Room TV*** while the controls, seek bar, chapters, seek previews, double-tap seek, speed, previous / next and the up-next countdown all drive the TV; in full screen the right-edge swipe sets the **TV's volume**. The bundled clips live in `res/raw`, which a TV can't reach, so while casting the phone serves them to it over the local network from a small built-in HTTP server (byte ranges for seeking, plus the thumbnail for the TV's loading screen); it starts with the first cast and stops when the session ends. Casting carries on with the app in the background (no pause, no picture-in-picture, the screen may sleep) with a **Cast notification** to control it, and closing the player stops the video but stays connected. Ending the session brings the video back to the phone where the TV left off. Plays on Google's **Default Media Receiver**; the phone and TV need to be on the same Wi-Fi. |
 | **Picture-in-Picture** | Leaving the app while a video plays continues it in a system **PiP window** with **previous, play/pause and next** actions — auto-enter on Android 12+, `onUserLeaveHint` on older versions. |
 | **State survives rotation** | Player position, collapse state and docked corner are saved with a custom `Saver`. |
 
@@ -145,7 +146,9 @@ app/src/main/java/com/nameisjayant/composevideos/
     │                                  # ReelPlayer (pool), ReelScrubber, ReelComments, ReelOptions
     └── videos/
         ├── data/                      # Video, Chapter (timestamp & chapter parsing), VideosRepository,
-        │                              # SeekPreviews (seek-bar frames via MediaMetadataRetriever)
+        │                              # SeekPreviews (seek-bar frames via MediaMetadataRetriever),
+        │                              # VideoCast (Cast options, media item converter),
+        │                              # CastMediaServer (serves bundled clips to the TV)
         ├── di/VideosModule.kt
         └── presentation/              # VideosContract, VideosViewModel, VideosScreen,
                                        # VideoPlayerViewModel, VideoPlayerOverlay,
@@ -155,7 +158,8 @@ app/src/main/java/com/nameisjayant/composevideos/
                                        # VideoPlaybackSettings (quality & speed menu),
                                        # VideoChapters (chapter seek track, linked description),
                                        # VideoSeekPreview (thumbnail over the seek bar),
-                                       # VideoOrientation (full-screen button / Back rotation)
+                                       # VideoOrientation (full-screen button / Back rotation),
+                                       # VideoCast (Cast button, "Casting to" backdrop)
 ```
 
 ---
@@ -165,7 +169,7 @@ app/src/main/java/com/nameisjayant/composevideos/
 | Tool | Version |
 |---|---|
 | **Android Studio** | 2026.1.4 (build `AI-261.26222.65`) |
-| **Kotlin** | 2.4.20 |
+| **Kotlin** | 2.4.21 |
 | **Android Gradle Plugin (AGP)** | 9.4.1 |
 | **Gradle** | 9.6.0 |
 | **KSP** | 2.3.12 |
@@ -175,7 +179,7 @@ app/src/main/java/com/nameisjayant/composevideos/
 | **UI** | Jetpack Compose + Material 3 |
 | **DI** | Hilt (Dagger) |
 | **Async** | Kotlin Coroutines & Flow |
-| **Media** | AndroidX Media3 ExoPlayer + Media3 UI Compose |
+| **Media** | AndroidX Media3 ExoPlayer + Media3 UI Compose + Media3 Cast |
 | **Navigation** | Navigation Compose with type-safe `@Serializable` routes |
 
 ---
@@ -189,8 +193,8 @@ All versions are managed in [`gradle/libs.versions.toml`](gradle/libs.versions.t
 | Plugin | ID | Version |
 |---|---|---|
 | Android Application | `com.android.application` | 9.4.1 |
-| Kotlin Compose Compiler | `org.jetbrains.kotlin.plugin.compose` | 2.4.20 |
-| Kotlin Serialization | `org.jetbrains.kotlin.plugin.serialization` | 2.4.20 |
+| Kotlin Compose Compiler | `org.jetbrains.kotlin.plugin.compose` | 2.4.21 |
+| Kotlin Serialization | `org.jetbrains.kotlin.plugin.serialization` | 2.4.21 |
 | KSP | `com.google.devtools.ksp` | 2.3.12 |
 | Hilt | `com.google.dagger.hilt.android` | 2.60.1 |
 | Foojay Toolchain Resolver | `org.gradle.toolchains.foojay-resolver-convention` | 1.0.0 |
@@ -201,7 +205,7 @@ All versions are managed in [`gradle/libs.versions.toml`](gradle/libs.versions.t
 |---|---|---|
 | **Core** | `androidx.core:core-ktx` | 1.19.1 |
 | | `androidx.activity:activity-compose` | 1.13.0 |
-| **Compose** | `androidx.compose:compose-bom` | 2026.02.01 |
+| **Compose** | `androidx.compose:compose-bom` | 2026.09.00 |
 | | `androidx.compose.ui:ui`, `ui-graphics`, `ui-tooling-preview` | via BOM |
 | | `androidx.compose.material3:material3` | via BOM |
 | **Lifecycle** | `androidx.lifecycle:lifecycle-runtime-ktx` | 2.11.0 |
@@ -215,6 +219,7 @@ All versions are managed in [`gradle/libs.versions.toml`](gradle/libs.versions.t
 | **Coroutines** | `org.jetbrains.kotlinx:kotlinx-coroutines-android` | 1.11.0 |
 | **Media** | `androidx.media3:media3-exoplayer` | 1.11.1 |
 | | `androidx.media3:media3-ui-compose` | 1.11.1 |
+| | `androidx.media3:media3-cast` | 1.11.1 |
 
 ### Testing
 
@@ -267,6 +272,8 @@ cd AndroidPractice
 Or simply open the project in Android Studio, pick a build variant from **Build Variants**, and hit ▶ **Run**.
 
 > 💡 Picture-in-Picture requires a device or emulator that supports it (Android 8.0+).
+>
+> 📺 Casting needs Google Play services on the phone and a Chromecast or Cast-enabled TV on the same Wi-Fi network (one that lets devices reach each other, so not most guest networks).
 
 ---
 
@@ -278,6 +285,7 @@ ViewModels are covered by JVM unit tests using fake repositories and `kotlinx-co
 - **`VideosViewModelTest`** — loading and error-retry.
 - **`ChaptersTest`** — chapter parsing and YouTube's rules (starts at 0:00, at least three, in order, 10 s minimum), timestamp links in running text, and the chapter at a given position.
 - **`SeekPreviewsTest`** — coarse-to-fine decode order covering every frame once, and picking the closest decoded frame (clamped at the ends) while the rest load.
+- **`CastMediaServerTest`** — the cast server's HTTP request parsing and byte ranges (closed, open-ended, suffix, clamped past the end, and the ones it refuses).
 
 ```bash
 ./gradlew testBetaDebugUnitTest

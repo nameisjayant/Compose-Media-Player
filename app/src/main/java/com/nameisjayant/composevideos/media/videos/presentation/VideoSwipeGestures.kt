@@ -55,6 +55,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.media3.common.C
+import androidx.media3.common.DeviceInfo
 import androidx.media3.common.Player
 import com.nameisjayant.composevideos.R
 import com.nameisjayant.composevideos.media.ui.MediaColors
@@ -71,6 +72,13 @@ private const val MIN_WINDOW_BRIGHTNESS = 0.01f
 
 /** What a full-screen swipe is changing. */
 internal enum class SwipeKind { Brightness, Volume, Seek }
+
+/** A volume in steps from [min] to [max], seen by the swipe as a 0–1 level. */
+private class VolumeControl(val min: Int, val max: Int, val get: () -> Int, val set: (Int) -> Unit) {
+    fun level(index: Int): Float = (index - min).toFloat() / (max - min)
+
+    fun index(level: Float): Int = min + (level * (max - min)).roundToInt()
+}
 
 /**
  * The full-screen swipe in progress: brightness or volume as a 0–1 level, or where a seek will
@@ -107,6 +115,31 @@ internal class SwipeAdjustState(context: Context) {
     // Where the finger has taken things, before rounding to volume steps or clamping a seek.
     private var rawLevel = 0f
     private var rawSeekOffset = 0f
+    private var volumeIndex = 0
+
+    /**
+     * The TV's volume while casting, else the phone's media volume; null when it can't be changed
+     * (fixed volume, or a TV that won't take it from the phone).
+     */
+    private fun volume(): VolumeControl? {
+        val player = player
+        if (player != null && player.deviceInfo.playbackType == DeviceInfo.PLAYBACK_TYPE_REMOTE) {
+            val canChange = player.isCommandAvailable(Player.COMMAND_GET_DEVICE_VOLUME) &&
+                player.isCommandAvailable(Player.COMMAND_SET_DEVICE_VOLUME_WITH_FLAGS)
+            val info = player.deviceInfo
+            if (!canChange || info.maxVolume <= info.minVolume) return null
+            return VolumeControl(info.minVolume, info.maxVolume, { player.deviceVolume }, { player.setDeviceVolume(it, 0) })
+        }
+        val audio = audio?.takeUnless { it.isVolumeFixed } ?: return null
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        if (max <= 0) return null
+        return VolumeControl(
+            min = 0,
+            max = max,
+            get = { audio.getStreamVolume(AudioManager.STREAM_MUSIC) },
+            set = { audio.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0) },
+        )
+    }
 
     /** Starts a swipe of [kind], or returns false when there's nothing to change (fixed volume, unseekable video). */
     fun start(kind: SwipeKind): Boolean {
@@ -117,10 +150,9 @@ internal class SwipeAdjustState(context: Context) {
             }
 
             SwipeKind.Volume -> {
-                val audio = audio?.takeUnless { it.isVolumeFixed } ?: return false
-                val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                if (max <= 0) return false
-                rawLevel = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max
+                val volume = volume() ?: return false
+                volumeIndex = volume.get()
+                rawLevel = volume.level(volumeIndex)
                 level = rawLevel
             }
 
@@ -149,13 +181,14 @@ internal class SwipeAdjustState(context: Context) {
 
             SwipeKind.Volume -> {
                 if (!moveLevel(fraction)) return
-                val audio = audio ?: return
-                val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                val index = (rawLevel * max).roundToInt()
-                if (index != audio.getStreamVolume(AudioManager.STREAM_MUSIC)) {
-                    audio.setStreamVolume(AudioManager.STREAM_MUSIC, index, 0)
+                val volume = volume() ?: return
+                val index = volume.index(rawLevel)
+                // Against the last step set rather than read back, as a TV's volume catches up late.
+                if (index != volumeIndex) {
+                    volume.set(index)
+                    volumeIndex = index
                 }
-                level = index.toFloat() / max
+                level = volume.level(index)
             }
 
             SwipeKind.Seek -> {

@@ -239,6 +239,12 @@ private fun ReelsHeader(
  */
 private const val PRELOAD_PAGES = 1
 
+/**
+ * Reels after the current one kept buffered. The first is the composed neighbour above; the rest
+ * are warmed on idle pooled players, so even the page that composes mid-swipe starts instantly.
+ */
+private const val PRELOAD_AHEAD = 2
+
 /** Fraction of a page a slow drag must cover to move on; lower than the default half, like Instagram. */
 private const val SNAP_THRESHOLD = 0.25f
 
@@ -266,6 +272,12 @@ private fun ReelsPager(
     // Report only fully settled pages, so a reel starts once the swipe finishes (like Instagram).
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.settledPage }.collect { onIntent(ReelsIntent.PageSettled(it)) }
+    }
+    // Warm the reels ahead only once a swipe settles, keeping player setup off the swipe itself.
+    LaunchedEffect(pagerState, playerPool, state.reels) {
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            playerPool.preload(state.reels.drop(page + 1).take(PRELOAD_AHEAD))
+        }
     }
 
     VerticalPager(

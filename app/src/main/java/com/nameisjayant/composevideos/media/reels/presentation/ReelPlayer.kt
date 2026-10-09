@@ -32,7 +32,7 @@ import androidx.media3.ui.compose.ContentFrame
 import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
 import com.nameisjayant.composevideos.media.reels.data.Reel
 
-/** Idle players kept warm for reuse; anything beyond this is released. */
+/** Idle players kept warm for reuse or preloading; anything beyond this is released. */
 private const val MAX_IDLE_PLAYERS = 2
 
 /**
@@ -45,22 +45,48 @@ class ReelPlayerPool(private val context: Context) {
     private val idle = ArrayDeque<ExoPlayer>()
     private val leased = mutableSetOf<ExoPlayer>()
 
+    /** Reels [preload] was last asked to warm, so leasing something else doesn't steal their players. */
+    private var warmIds = emptySet<String>()
+
     /** Hands out a player loaded with [reel], preferring an idle one that already has it prepared. */
     fun lease(reel: Reel): PlayerLease {
-        val player = idle.firstOrNull { it.currentMediaItem?.mediaId == reel.id }?.also(idle::remove)
+        val player = idle.firstOrNull { it.mediaId == reel.id }?.also(idle::remove)
+            ?: idle.firstOrNull { it.mediaId !in warmIds }?.also(idle::remove)
             ?: idle.removeFirstOrNull()
             ?: buildPlayer()
-        if (player.currentMediaItem?.mediaId != reel.id) {
-            player.setMediaItem(
-                MediaItem.Builder()
-                    .setMediaId(reel.id)
-                    .setUri(RawResourceDataSource.buildRawResourceUri(reel.videoRes))
-                    .build(),
-            )
-            player.prepare()
-        }
+        player.load(reel)
         leased += player
         return PlayerLease(player)
+    }
+
+    /**
+     * Prepares idle players with [reels] ahead of the pager composing them, so the page that
+     * slides in later leases a player whose decoder is up and first frame is ready instead of
+     * loading one mid-swipe. Reels already on a player are skipped; at most [MAX_IDLE_PLAYERS]
+     * are warmed, nearest first. Call it once the pager settles, when main-thread work is free.
+     */
+    fun preload(reels: List<Reel>) {
+        warmIds = reels.take(MAX_IDLE_PLAYERS).mapTo(mutableSetOf()) { it.id }
+        for (reel in reels.take(MAX_IDLE_PLAYERS)) {
+            if ((idle + leased).any { it.mediaId == reel.id }) continue
+            val player = idle.firstOrNull { it.mediaId !in warmIds }?.also(idle::remove)
+                ?: if (idle.size < MAX_IDLE_PLAYERS) buildPlayer() else break
+            player.load(reel)
+            idle.addLast(player)
+        }
+    }
+
+    private val ExoPlayer.mediaId: String? get() = currentMediaItem?.mediaId
+
+    private fun ExoPlayer.load(reel: Reel) {
+        if (mediaId == reel.id) return
+        setMediaItem(
+            MediaItem.Builder()
+                .setMediaId(reel.id)
+                .setUri(RawResourceDataSource.buildRawResourceUri(reel.videoRes))
+                .build(),
+        )
+        prepare()
     }
 
     private fun recycle(player: ExoPlayer) {

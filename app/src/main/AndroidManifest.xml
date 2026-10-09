@@ -16,8 +16,10 @@
         android:theme="@style/Theme.AndroidPractice">
         <activity
             android:name=".MainActivity"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
             android:exported="true"
             android:label="@string/app_name"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.AndroidPractice"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

@@ -42,6 +42,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -52,9 +53,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
@@ -68,6 +72,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.compose.ContentFrame
 import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
@@ -86,7 +91,9 @@ private val BottomScrim = Brush.verticalGradient(listOf(Color.Transparent, Color
 /**
  * Portrait: a 16:9 player at the top with the title and description below it.
  * Landscape: only the video, edge to edge, with the system bars hidden.
+ * Picture-in-picture: only the video, with no controls, while the app is in the background.
  */
+@OptIn(UnstableApi::class)
 @Composable
 fun VideoPlayerScreen(
     onBack: () -> Unit,
@@ -96,12 +103,27 @@ fun VideoPlayerScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val player = viewModel.player
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isInPip = rememberIsInPictureInPicture()
     val activity = LocalActivity.current
+    val playPause = rememberPlayPauseButtonState(player)
+    val videoAspectRatio by rememberVideoAspectRatio(player)
+    var videoBounds by remember { mutableStateOf<Rect?>(null) }
 
-    HideSystemBarsEffect(hide = isLandscape)
+    HideSystemBarsEffect(hide = isLandscape && !isInPip)
 
-    // Pause when the app goes to the background. Rotating also stops (and recreates) the activity,
-    // but the player lives on the ViewModel, so skip that and let playback carry straight on.
+    // Going home (or swiping up) mid-video keeps it playing in a floating window.
+    PictureInPictureEffect(
+        autoEnter = !playPause.showPlay && state.error == null,
+        isPlaying = !playPause.showPlay,
+        videoAspectRatio = videoAspectRatio,
+        videoBounds = videoBounds,
+        onPlayPause = playPause::onClick,
+    )
+
+    // Pause when the app goes to the background. Activity recreation (e.g. a theme change) also
+    // stops it, but the player lives on the ViewModel, so skip that and let playback carry on.
+    // A picture-in-picture window only pauses the activity, so the video keeps playing in it;
+    // closing the window stops the activity and pauses the video here.
     LifecycleStartEffect(viewModel) {
         viewModel.onForeground()
         onStopOrDispose {
@@ -120,42 +142,37 @@ fun VideoPlayerScreen(
     }
 
     val onRetry = { viewModel.onIntent(VideoPlayerIntent.LoadVideo) }
+    val videoOnly = isLandscape || isInPip
 
-    if (isLandscape) {
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .background(Color.Black),
-        ) {
-            VideoSurface(
-                player = player,
-                state = state,
-                isFullScreen = true,
-                onBack = onBack,
-                onRetry = onRetry,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-    } else {
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .background(MediaColors.Canvas),
-        ) {
-            VideoSurface(
-                player = player,
-                state = state,
-                isFullScreen = false,
-                onBack = onBack,
-                onRetry = onRetry,
-                modifier = Modifier
-                    .background(Color.Black)
-                    .statusBarsPadding()
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f),
-            )
-            state.video?.let { VideoDetails(it) }
-        }
+    // One layout for every mode, so the video surface stays put (no black flash) as the window
+    // rotates or shrinks into picture-in-picture; only its size changes.
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(if (videoOnly) Color.Black else MediaColors.Canvas),
+    ) {
+        VideoSurface(
+            player = player,
+            state = state,
+            isFullScreen = isLandscape,
+            isInPip = isInPip,
+            onBack = onBack,
+            onRetry = onRetry,
+            modifier = Modifier
+                .then(
+                    if (videoOnly) {
+                        Modifier.fillMaxSize()
+                    } else {
+                        Modifier
+                            .background(Color.Black)
+                            .statusBarsPadding()
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                    },
+                )
+                .onGloballyPositioned { videoBounds = it.boundsInWindow() },
+        )
+        if (!videoOnly) state.video?.let { VideoDetails(it) }
     }
 }
 
@@ -166,6 +183,7 @@ private fun VideoSurface(
     player: Player,
     state: VideoPlayerState,
     isFullScreen: Boolean,
+    isInPip: Boolean,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
@@ -188,6 +206,8 @@ private fun VideoSurface(
 
     Box(
         modifier = modifier.clickable(
+            // The picture-in-picture window handles its own taps (and has no room for controls).
+            enabled = !isInPip,
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             onClickLabel = if (controlsVisible) "Hide controls" else "Show controls",
@@ -203,6 +223,8 @@ private fun VideoSurface(
         )
 
         when {
+            isInPip -> Unit
+
             state.error != null -> PlayerError(
                 message = state.error,
                 onRetry = onRetry,
@@ -244,7 +266,7 @@ private fun VideoSurface(
         // Back stays reachable even while the controls are hidden in portrait; in full screen it
         // comes and goes with them (with the title), so nothing sits on the video.
         AnimatedVisibility(
-            visible = !isFullScreen || controlsVisible || state.error != null,
+            visible = !isInPip && (!isFullScreen || controlsVisible || state.error != null),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopStart),
@@ -511,6 +533,25 @@ private fun rememberPlaybackState(player: Player): State<Int> {
     }
     return state
 }
+
+/** The video's width / height, kept current as it loads; 16:9 until it's known. */
+@Composable
+private fun rememberVideoAspectRatio(player: Player): State<Float> {
+    val state = remember(player) { mutableFloatStateOf(player.videoSize.aspectRatio()) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                state.floatValue = videoSize.aspectRatio()
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+    return state
+}
+
+private fun VideoSize.aspectRatio(): Float =
+    if (width > 0 && height > 0) width * pixelWidthHeightRatio / height else 16f / 9f
 
 /** Stops the screen dimming and locking mid-video. */
 @Composable

@@ -25,8 +25,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Owns the [player], so rotating between the portrait and full-screen layouts (which recreates
- * the activity) carries on playing from the same spot instead of rebuffering from the start.
+ * Owns the [player], so anything that recreates the activity carries on playing from the same
+ * spot instead of rebuffering from the start.
  */
 @OptIn(UnstableApi::class)
 @HiltViewModel

@@ -392,6 +392,7 @@ private fun ReelItem(
                         onDoubleTap = {
                             burstAt = it
                             burstKey++
+                            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
                             currentOnDoubleTap()
                         },
                     )
@@ -665,11 +666,15 @@ private fun LikeButton(isLiked: Boolean, count: Int, onClick: () -> Unit) {
         pop.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium))
     }
     val tint by animateColorAsState(if (isLiked) LikeRed else Color.White, label = "likeTint")
+    val haptics = LocalHapticFeedback.current
     ReelAction(
         icon = if (isLiked) R.drawable.ic_heart_filled else R.drawable.ic_heart,
         label = formatCount(count),
         contentDescription = if (isLiked) "Unlike" else "Like",
-        onClick = onClick,
+        onClick = {
+            haptics.performHapticFeedback(if (isLiked) HapticFeedbackType.ToggleOff else HapticFeedbackType.ToggleOn)
+            onClick()
+        },
         tint = tint,
         iconModifier = Modifier.scale(pop.value),
     )
@@ -749,6 +754,7 @@ private fun GlassIconButton(
 private fun SpeedButton(speed: Float, onClick: () -> Unit) {
     val label = (if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()) + "x"
     val isDefault = speed == 1f
+    val haptics = LocalHapticFeedback.current
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
@@ -760,7 +766,10 @@ private fun SpeedButton(speed: Float, onClick: () -> Unit) {
                 if (isDefault) Color.White.copy(alpha = 0.18f) else MediaColors.Accent.copy(alpha = 0.6f),
                 CircleShape,
             )
-            .clickable(onClickLabel = "Change playback speed", onClick = onClick),
+            .clickable(onClickLabel = "Change playback speed") {
+                haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                onClick()
+            },
     ) {
         Text(
             text = label,

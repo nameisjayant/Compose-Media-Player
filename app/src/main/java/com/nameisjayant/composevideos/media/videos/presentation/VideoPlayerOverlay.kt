@@ -4,6 +4,7 @@ import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.PredictiveBackHandler
+import androidx.annotation.DrawableRes
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
@@ -251,6 +252,8 @@ fun VideoPlayerOverlay(
         videoAspectRatio = videoAspectRatio,
         videoBounds = if (isMini) geometry.mini(sheetState.corner) else geometry.expanded,
         onPlayPause = playPause::onClick,
+        onNext = { viewModel.onIntent(VideoPlayerIntent.PlayNext) },
+        onPrevious = { viewModel.onIntent(VideoPlayerIntent.PlayPrevious) },
     )
 
     // Pause when the app goes to the background. Activity recreation (e.g. a theme change) also
@@ -396,6 +399,8 @@ fun VideoPlayerOverlay(
                     isEnded = playbackState == Player.STATE_ENDED,
                     playPauseEnabled = playPause.isEnabled,
                     onPlayPause = playPause::onClick,
+                    onNext = { viewModel.onIntent(VideoPlayerIntent.PlayNext) },
+                    onPrevious = { viewModel.onIntent(VideoPlayerIntent.PlayPrevious) },
                     onClose = onClose,
                     onExpand = onExpand,
                     onDrag = { amount ->
@@ -471,8 +476,8 @@ private class SheetGeometry(
 }
 
 /**
- * Play/pause and close on the floating window. Tapping anywhere else grows it back to the full
- * player; dragging moves it around.
+ * Expand, previous, play/pause, next and close on the floating window. Tapping the expand button,
+ * or anywhere else, grows it back to the full player; dragging moves it around.
  */
 @Composable
 private fun MiniPlayerControls(
@@ -480,6 +485,8 @@ private fun MiniPlayerControls(
     isEnded: Boolean,
     playPauseEnabled: Boolean,
     onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
     onClose: () -> Unit,
     onExpand: () -> Unit,
     onDrag: (Offset) -> Unit,
@@ -502,38 +509,61 @@ private fun MiniPlayerControls(
             .clickable(onClickLabel = "Expand player", onClick = onExpand)
             .background(Color.Black.copy(alpha = 0.2f)),
     ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.align(Alignment.Center),
+        ) {
+            MiniSkipButton(R.drawable.ic_skip_previous, "Previous video", onPrevious)
+            IconButton(
+                onClick = onPlayPause,
+                enabled = playPauseEnabled,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MediaColors.Glass),
+            ) {
+                Icon(
+                    painter = painterResource(
+                        when {
+                            isEnded -> R.drawable.ic_replay
+                            showPlay -> R.drawable.ic_play
+                            else -> R.drawable.ic_pause
+                        },
+                    ),
+                    contentDescription = when {
+                        isEnded -> "Replay"
+                        showPlay -> "Play"
+                        else -> "Pause"
+                    },
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            MiniSkipButton(R.drawable.ic_skip_next, "Next video", onNext)
+        }
         IconButton(
-            onClick = onPlayPause,
-            enabled = playPauseEnabled,
+            onClick = onExpand,
             modifier = Modifier
-                .align(Alignment.Center)
-                .size(40.dp)
+                .align(Alignment.TopStart)
+                .padding(6.dp)
+                .size(24.dp)
                 .clip(CircleShape)
                 .background(MediaColors.Glass),
         ) {
             Icon(
-                painter = painterResource(
-                    when {
-                        isEnded -> R.drawable.ic_replay
-                        showPlay -> R.drawable.ic_play
-                        else -> R.drawable.ic_pause
-                    },
-                ),
-                contentDescription = when {
-                    isEnded -> "Replay"
-                    showPlay -> "Play"
-                    else -> "Pause"
-                },
+                painter = painterResource(R.drawable.ic_open_in_full),
+                contentDescription = "Expand player",
                 tint = Color.White,
-                modifier = Modifier.size(22.dp),
+                modifier = Modifier.size(12.dp),
             )
         }
         IconButton(
             onClick = onClose,
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(4.dp)
-                .size(28.dp)
+                .padding(6.dp)
+                .size(24.dp)
                 .clip(CircleShape)
                 .background(MediaColors.Glass),
         ) {
@@ -541,9 +571,28 @@ private fun MiniPlayerControls(
                 painter = painterResource(R.drawable.ic_close),
                 contentDescription = "Close player",
                 tint = Color.White,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(13.dp),
             )
         }
+    }
+}
+
+/** A previous/next button on the floating window, a little smaller than play/pause. */
+@Composable
+private fun MiniSkipButton(@DrawableRes icon: Int, contentDescription: String, onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(32.dp)
+            .clip(CircleShape)
+            .background(MediaColors.Glass),
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = contentDescription,
+            tint = Color.White,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
 

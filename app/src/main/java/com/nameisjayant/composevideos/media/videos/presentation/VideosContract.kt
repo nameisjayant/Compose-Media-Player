@@ -34,6 +34,10 @@ data class VideoPlayerState(
 sealed interface VideoPlayerIntent {
     data class Open(val videoId: String) : VideoPlayerIntent
     data object Close : VideoPlayerIntent
+    /** Moves on to the next video in the list, wrapping round, without expanding the player. */
+    data object PlayNext : VideoPlayerIntent
+    /** Goes back to the previous video in the list, wrapping round, without expanding the player. */
+    data object PlayPrevious : VideoPlayerIntent
     data object LoadVideo : VideoPlayerIntent
     data class PlaybackFailed(val reason: String) : VideoPlayerIntent
     data class SetPlaybackSpeed(val speed: Float) : VideoPlayerIntent

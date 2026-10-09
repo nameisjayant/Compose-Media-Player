@@ -13,6 +13,7 @@ import android.os.Build
 import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
+import androidx.annotation.DrawableRes
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -50,7 +51,8 @@ fun rememberIsInPictureInPicture(): Boolean {
  * swipe up) while it's playing. On Android 12+ the system shrinks it straight from the gesture;
  * earlier versions enter picture-in-picture from [ComponentActivity.onUserLeaveHint].
  *
- * The window shows a play/pause button that calls [onPlayPause]. Leaving the player screen turns
+ * The window shows previous, play/pause and next buttons that call [onPrevious], [onPlayPause] and
+ * [onNext]. Leaving the player screen turns
  * auto-entry off again, so the rest of the app backgrounds normally.
  *
  * @param videoAspectRatio width / height of the video, used to shape the window.
@@ -63,6 +65,8 @@ fun PictureInPictureEffect(
     videoAspectRatio: Float,
     videoBounds: Rect?,
     onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
 ) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val activity = LocalActivity.current as? ComponentActivity ?: return
@@ -72,19 +76,31 @@ fun PictureInPictureEffect(
     if (!supported) return
 
     val currentOnPlayPause by rememberUpdatedState(onPlayPause)
+    val currentOnNext by rememberUpdatedState(onNext)
+    val currentOnPrevious by rememberUpdatedState(onPrevious)
     val playPauseAction = "${activity.packageName}.action.PIP_PLAY_PAUSE"
+    val nextAction = "${activity.packageName}.action.PIP_NEXT"
+    val previousAction = "${activity.packageName}.action.PIP_PREVIOUS"
 
-    // Taps on the window's play/pause button arrive as a broadcast.
+    // Taps on the window's buttons arrive as broadcasts.
     DisposableEffect(activity) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                if (intent.action == playPauseAction) currentOnPlayPause()
+                when (intent.action) {
+                    playPauseAction -> currentOnPlayPause()
+                    nextAction -> currentOnNext()
+                    previousAction -> currentOnPrevious()
+                }
             }
         }
         ContextCompat.registerReceiver(
             activity,
             receiver,
-            IntentFilter(playPauseAction),
+            IntentFilter().apply {
+                addAction(playPauseAction)
+                addAction(nextAction)
+                addAction(previousAction)
+            },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
         onDispose { activity.unregisterReceiver(receiver) }
@@ -92,7 +108,7 @@ fun PictureInPictureEffect(
 
     val ratio = videoAspectRatio.toPipRatio()
     val params = remember(isPlaying, autoEnter, ratio, videoBounds) {
-        buildParams(activity, playPauseAction, isPlaying, autoEnter, ratio, videoBounds)
+        buildParams(activity, playPauseAction, nextAction, previousAction, isPlaying, autoEnter, ratio, videoBounds)
     }
     val currentParams by rememberUpdatedState(params)
     val currentAutoEnter by rememberUpdatedState(autoEnter)
@@ -128,26 +144,26 @@ fun PictureInPictureEffect(
 private fun buildParams(
     context: Context,
     playPauseAction: String,
+    nextAction: String,
+    previousAction: String,
     isPlaying: Boolean,
     autoEnter: Boolean,
     ratio: Rational,
     videoBounds: Rect?,
 ): PictureInPictureParams {
-    val label = if (isPlaying) "Pause" else "Play"
-    val action = RemoteAction(
-        Icon.createWithResource(context, if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
-        label,
-        label,
-        PendingIntent.getBroadcast(
-            context,
-            0,
-            Intent(playPauseAction).setPackage(context.packageName),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        ),
-    )
     val builder = PictureInPictureParams.Builder()
         .setAspectRatio(ratio)
-        .setActions(listOf(action))
+        .setActions(
+            listOf(
+                remoteAction(context, previousAction, requestCode = 2, R.drawable.ic_skip_previous, "Previous"),
+                if (isPlaying) {
+                    remoteAction(context, playPauseAction, requestCode = 0, R.drawable.ic_pause, "Pause")
+                } else {
+                    remoteAction(context, playPauseAction, requestCode = 0, R.drawable.ic_play, "Play")
+                },
+                remoteAction(context, nextAction, requestCode = 1, R.drawable.ic_skip_next, "Next"),
+            ),
+        )
     videoBounds?.fitTo(ratio)?.let(builder::setSourceRectHint)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         builder.setAutoEnterEnabled(autoEnter)
@@ -156,6 +172,26 @@ private fun buildParams(
     }
     return builder.build()
 }
+
+/** A window button that sends [action] as a broadcast; each needs its own [requestCode]. */
+@RequiresApi(Build.VERSION_CODES.O)
+private fun remoteAction(
+    context: Context,
+    action: String,
+    requestCode: Int,
+    @DrawableRes icon: Int,
+    label: String,
+) = RemoteAction(
+    Icon.createWithResource(context, icon),
+    label,
+    label,
+    PendingIntent.getBroadcast(
+        context,
+        requestCode,
+        Intent(action).setPackage(context.packageName),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    ),
+)
 
 /** The ratio as a [Rational] within the range the system allows, falling back to 16:9. */
 private fun Float.toPipRatio(): Rational {

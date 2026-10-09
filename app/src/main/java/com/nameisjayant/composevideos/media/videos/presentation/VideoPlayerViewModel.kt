@@ -75,6 +75,8 @@ class VideoPlayerViewModel @Inject constructor(
                 player.playWhenReady = true
             }
             VideoPlayerIntent.Close -> close()
+            VideoPlayerIntent.PlayNext -> skip(1)
+            VideoPlayerIntent.PlayPrevious -> skip(-1)
             VideoPlayerIntent.LoadVideo -> loadVideo()
             is VideoPlayerIntent.PlaybackFailed ->
                 _state.update { it.copy(error = "This video can't be played (${intent.reason})") }
@@ -102,6 +104,25 @@ class VideoPlayerViewModel @Inject constructor(
         if (current.isOpen && current.videoId == videoId) return
         _state.update { it.copy(video = null) }
         loadVideo()
+    }
+
+    /**
+     * Swaps in the video [step] places along the list (wrapping round) where the player already is, so the floating window or
+     * picture-in-picture stays put. Unlike [open], it leaves [VideoPlayerState.openRequest] alone.
+     */
+    private fun skip(step: Int) {
+        val currentId = _state.value.videoId ?: return
+        viewModelScope.launch {
+            val videos = repository.getVideos()
+            if (videos.isEmpty()) return@launch
+            val next = videos[(videos.indexOfFirst { it.id == currentId } + step).mod(videos.size)]
+            // Closed, or another video picked, while the list loaded.
+            if (!_state.value.isOpen || _state.value.videoId != currentId) return@launch
+            savedStateHandle[KEY_VIDEO_ID] = next.id
+            _state.update { it.copy(videoId = next.id, video = null) }
+            player.playWhenReady = true
+            loadVideo()
+        }
     }
 
     private fun close() {

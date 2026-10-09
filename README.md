@@ -62,6 +62,7 @@
 | **Video list** | 16:9 thumbnails with duration badges for four Blender open movies. |
 | **Smooth open animation** | The player slides up over the app using Material 3 *emphasized* easing curves. |
 | **Full player controls** | Play/pause, seek bar and auto-hiding controls (3 s timeout) with gradient scrims. |
+| **Double-tap to seek ±10 s** | Double-tap the **left** half to rewind or the **right** half to fast-forward 10 s. Keep tapping on the same side to add 10 s per tap. A curved shaded panel grows in from the edge with **overlapping ripples** from each tap, animated chevrons, a rolling seconds counter and a haptic tick. Drags still swipe the player down, and TalkBack gets *Rewind / Forward 10 seconds* actions. |
 | **In-app floating window** | Drag the player down to shrink it into a **mini floating window** that keeps playing while you browse; drag it to any of the **four corners**, fling to dock, and tap to expand again. |
 | **Picture-in-Picture** | Leaving the app while a video plays continues it in a system **PiP window** with a play/pause action — auto-enter on Android 12+, `onUserLeaveHint` on older versions. |
 | **State survives rotation** | Player position, collapse state and docked corner are saved with a custom `Saver`. |
@@ -140,7 +141,8 @@ app/src/main/java/com/nameisjayant/composevideos/
         ├── di/VideosModule.kt
         └── presentation/              # VideosContract, VideosViewModel, VideosScreen,
                                        # VideoPlayerViewModel, VideoPlayerOverlay,
-                                       # PlayerSheetState, VideoPictureInPicture
+                                       # PlayerSheetState, VideoPictureInPicture,
+                                       # VideoSeekGestures (double-tap seek + ripple)
 ```
 
 ---

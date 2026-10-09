@@ -16,7 +16,6 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -68,6 +67,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.translate
@@ -78,8 +78,13 @@ import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -91,6 +96,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -539,15 +545,46 @@ private fun VideoSurface(
 
     KeepScreenOnEffect(keepOn = !playPause.showPlay)
 
+    val haptics = LocalHapticFeedback.current
+    val seekFeedback = remember { SeekFeedbackState() }
+    val canSeek by rememberUpdatedState(state.error == null && !state.isLoading)
+    val toggleControls = { controlsVisible = !controlsVisible }
+    fun seek(side: SeekSide) {
+        val target = player.currentPosition + side.direction * SEEK_STEP_MS
+        val duration = player.duration
+        player.seekTo(if (duration == C.TIME_UNSET) target.coerceAtLeast(0) else target.coerceIn(0, duration))
+    }
+
     Box(
-        modifier = modifier.clickable(
-            // Picture-in-picture and the floating window handle their own taps (and have no room
-            // for these controls).
-            enabled = showChrome,
-            interactionSource = remember { MutableInteractionSource() },
-            indication = null,
-            onClickLabel = if (controlsVisible) "Hide controls" else "Show controls",
-        ) { controlsVisible = !controlsVisible },
+        // Picture-in-picture and the floating window handle their own taps (and have no room for
+        // these controls).
+        modifier = modifier
+            .doubleTapToSeek(
+                enabled = showChrome,
+                seekEnabled = { canSeek },
+                isSeeking = seekFeedback::isSeeking,
+                onTap = toggleControls,
+                onSeek = { side, position ->
+                    seek(side)
+                    seekFeedback.onSeek(side, position)
+                    // Out of the way of the ripple; a tap brings them back.
+                    controlsVisible = false
+                    haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                },
+            )
+            .semantics {
+                if (!showChrome) return@semantics
+                onClick(label = if (controlsVisible) "Hide controls" else "Show controls") {
+                    toggleControls()
+                    true
+                }
+                if (canSeek) {
+                    customActions = listOf(
+                        CustomAccessibilityAction("Rewind 10 seconds") { seek(SeekSide.Back); true },
+                        CustomAccessibilityAction("Forward 10 seconds") { seek(SeekSide.Forward); true },
+                    )
+                }
+            },
     ) {
         ContentFrame(
             player = player,
@@ -598,6 +635,8 @@ private fun VideoSurface(
                 }
             }
         }
+
+        if (showChrome) SeekFeedback(seekFeedback)
 
         // Back stays reachable even while the controls are hidden in portrait; in full screen it
         // comes and goes with them (with the title), so nothing sits on the video.

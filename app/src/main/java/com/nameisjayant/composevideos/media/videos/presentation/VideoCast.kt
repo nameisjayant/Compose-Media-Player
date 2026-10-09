@@ -1,5 +1,6 @@
 package com.nameisjayant.composevideos.media.videos.presentation
 
+import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -27,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.media3.cast.MediaRouteButton
+import androidx.media3.common.util.UnstableApi
 import com.nameisjayant.composevideos.R
 import com.nameisjayant.composevideos.media.ui.MediaColors
 import com.nameisjayant.composevideos.media.videos.data.Video
@@ -35,6 +37,7 @@ import com.nameisjayant.composevideos.media.videos.data.Video
  * The Cast button: lists the TVs and speakers on the network, or, while casting, shows which one
  * it's on with a button to stop. Media3's own button, in white to sit on the video.
  */
+@OptIn(UnstableApi::class)
 @Composable
 internal fun CastButton(modifier: Modifier = Modifier) {
     CompositionLocalProvider(LocalContentColor provides Color.White) {

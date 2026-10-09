@@ -1,5 +1,6 @@
 package com.nameisjayant.composevideos.media.videos.data
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.AssetFileDescriptor
 import android.net.ConnectivityManager
@@ -116,6 +117,8 @@ class CastMediaServer @Inject constructor(
         }
     }
 
+    // Thumbnails are drawable JPEGs, stored uncompressed, so they open as raw bytes just fine.
+    @SuppressLint("ResourceType")
     private fun open(path: String): CastFile? {
         val match = PATH.matchEntire(path) ?: return null
         val (kind, id) = match.destructured

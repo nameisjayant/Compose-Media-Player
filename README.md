@@ -6,6 +6,7 @@
 
 **An Instagram-style Reels feed and a YouTube-style floating video player, built entirely with Jetpack Compose and Media3.**
 
+[![CI](https://github.com/nameisjayant/android-learning/actions/workflows/ci.yml/badge.svg)](https://github.com/nameisjayant/android-learning/actions/workflows/ci.yml)
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.4.21-7F52FF?logo=kotlin&logoColor=white)
 ![AGP](https://img.shields.io/badge/AGP-9.4.1-3DDC84?logo=android&logoColor=white)
 ![Gradle](https://img.shields.io/badge/Gradle-9.6.0-02303A?logo=gradle&logoColor=white)
@@ -56,6 +57,7 @@ The full video walks through every feature, with a caption for each:
 - [Build Variants](#-build-variants)
 - [Getting Started](#-getting-started)
 - [Testing](#-testing)
+- [CI/CD](#-cicd)
 - [Media Credits](#-media-credits)
 
 ---
@@ -317,6 +319,34 @@ ViewModels are covered by JVM unit tests using fake repositories and `kotlinx-co
 
 ```bash
 ./gradlew testBetaDebugUnitTest
+```
+
+---
+
+## 🔄 CI/CD
+
+Two GitHub Actions workflows live in [`.github/workflows`](.github/workflows):
+
+| Workflow | Runs on | What it does |
+|---|---|---|
+| **[CI](.github/workflows/ci.yml)** | Every push to `main`, every pull request, or manually | Lint (`lintBetaDebug`, `lintProdDebug`) → unit tests for both flavors → builds the beta debug and prod release APKs. Lint/test reports and the APKs are attached to the run as artifacts. A newer push cancels the run still in progress. |
+| **[Release](.github/workflows/release.yml)** | Pushing a `v*` tag | Runs the unit tests, builds the prod and beta release APKs and publishes them on a GitHub Release with auto-generated notes. |
+
+Both use JDK 21 (Temurin) and `gradle/actions/setup-gradle`, which validates the Gradle wrapper and caches dependencies between runs.
+
+To cut a release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+> 🔑 Release builds are still signed with the debug key (see `app/build.gradle.kts`), so the released APKs are for sideloading/testing, not the Play Store.
+
+Run the same checks locally before pushing:
+
+```bash
+./gradlew lintBetaDebug lintProdDebug testBetaDebugUnitTest testProdDebugUnitTest assembleBetaDebug assembleProdRelease
 ```
 
 ---

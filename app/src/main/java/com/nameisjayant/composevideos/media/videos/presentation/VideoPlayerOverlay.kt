@@ -197,6 +197,8 @@ fun VideoPlayerOverlay(
     // Full screen only: shuts out every touch on the player so a stray palm can't pause or seek.
     var lockRequested by rememberSaveable { mutableStateOf(false) }
     val isLocked = lockRequested && isLandscape && !isInPip && !isMini
+    // Picked by swiping the left edge in full screen; null follows the system brightness.
+    var brightness by rememberSaveable { mutableStateOf<Float?>(null) }
 
     var overlaySize by remember { mutableStateOf(IntSize.Zero) }
     val topInset = WindowInsets.statusBars.getTop(density)
@@ -224,6 +226,7 @@ fun VideoPlayerOverlay(
     suspend fun close() {
         offscreen.animateTo(1f, MediaMotion.exitSpec())
         lockRequested = false
+        brightness = null
         viewModel.onIntent(VideoPlayerIntent.Close)
     }
 
@@ -271,6 +274,13 @@ fun VideoPlayerOverlay(
     }
 
     HideSystemBarsEffect(hide = isLandscape && !isInPip && !isMini)
+
+    // The swiped brightness only lights the full-screen player; the floating windows and the rest
+    // of the app keep the system's, and leaving full screen forgets it.
+    WindowBrightnessEffect(level = brightness.takeIf { isLandscape && !isInPip && !isMini })
+    LaunchedEffect(isLandscape) {
+        if (!isLandscape) brightness = null
+    }
 
     // Going home (or swiping up) mid-video keeps it playing in a system floating window.
     PictureInPictureEffect(
@@ -416,6 +426,8 @@ fun VideoPlayerOverlay(
                 isFullScreen = isLandscape,
                 showChrome = !isCollapsing && !isInPip,
                 isLocked = isLocked,
+                brightness = brightness,
+                onBrightnessChange = { brightness = it },
                 onBack = onClose,
                 onOpenSettings = { settingsOpen = true },
                 onLockChange = {
@@ -668,6 +680,8 @@ private fun VideoSurface(
     isFullScreen: Boolean,
     showChrome: Boolean,
     isLocked: Boolean,
+    brightness: Float?,
+    onBrightnessChange: (Float) -> Unit,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onLockChange: (Boolean) -> Unit,
@@ -726,10 +740,19 @@ private fun VideoSurface(
         player.seekTo(if (duration == C.TIME_UNSET) target.coerceAtLeast(0) else target.coerceIn(0, duration))
     }
 
+    val swipe = rememberSwipeAdjustState()
+    swipe.player = player
+    swipe.canSeek = canSeek
+    swipe.brightness = brightness
+    swipe.onBrightnessChange = onBrightnessChange
+    swipe.onStart = { controlsVisible = false }
+    swipe.onLimit = { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) }
+
     Box(
         // Picture-in-picture and the floating window handle their own taps (and have no room for
         // these controls).
         modifier = modifier
+            .swipeToAdjust(enabled = isFullScreen && showChrome && !isLocked, state = swipe)
             .doubleTapToSeek(
                 enabled = showChrome && !isLocked,
                 seekEnabled = { canSeek },
@@ -823,6 +846,7 @@ private fun VideoSurface(
         }
 
         if (showChrome && !isLocked) SeekFeedback(seekFeedback)
+        if (isFullScreen && showChrome && !isLocked) SwipeAdjustFeedback(swipe)
 
         // Over the replay controls; cancelling it leaves them to replay. A locked screen still
         // counts down, it just can't be tapped.
@@ -1473,7 +1497,7 @@ private fun KeepScreenOnEffect(keepOn: Boolean) {
     }
 }
 
-private fun formatTime(ms: Long): String {
+internal fun formatTime(ms: Long): String {
     val totalSeconds = ms.coerceAtLeast(0) / 1000
     return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }

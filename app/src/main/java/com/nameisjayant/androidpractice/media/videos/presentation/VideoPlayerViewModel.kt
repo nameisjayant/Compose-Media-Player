@@ -12,12 +12,12 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.RawResourceDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import com.nameisjayant.androidpractice.media.navigation.MediaRoute
 import com.nameisjayant.androidpractice.media.videos.data.VideosRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,19 +25,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Owns the [player], so anything that recreates the activity carries on playing from the same
- * spot instead of rebuffering from the start.
+ * Owns the [player] for the whole activity, so the video keeps playing in the floating window
+ * while the user moves around the app, and anything that recreates the activity carries on from
+ * the same spot instead of rebuffering from the start.
  */
 @OptIn(UnstableApi::class)
 @HiltViewModel
 class VideoPlayerViewModel @Inject constructor(
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
     private val repository: VideosRepository,
     @ApplicationContext context: Context,
 ) : ViewModel() {
-
-    // Navigation stores a type-safe route's arguments under their property names.
-    private val videoId: String = checkNotNull(savedStateHandle[MediaRoute.VideoPlayer::videoId.name])
 
     private val _state = MutableStateFlow(VideoPlayerState())
     val state: StateFlow<VideoPlayerState> = _state.asStateFlow()
@@ -54,18 +52,26 @@ class VideoPlayerViewModel @Inject constructor(
         .setHandleAudioBecomingNoisy(true)
         .build()
 
-    /**
-     * Whether to (re)start playback the next time the screen is in the foreground: true at first
-     * so the video autoplays, then only if it was playing when the app went to the background.
-     */
-    private var resumeOnForeground = true
+    /** Whether to (re)start playback the next time the app is in the foreground. */
+    private var resumeOnForeground = false
+
+    private var loadJob: Job? = null
 
     init {
-        onIntent(VideoPlayerIntent.LoadVideo)
+        // Back after process death: reopen the video and pick playback up once the app is visible.
+        savedStateHandle.get<String>(KEY_VIDEO_ID)?.let {
+            open(it)
+            resumeOnForeground = true
+        }
     }
 
     fun onIntent(intent: VideoPlayerIntent) {
         when (intent) {
+            is VideoPlayerIntent.Open -> {
+                open(intent.videoId)
+                player.playWhenReady = true
+            }
+            VideoPlayerIntent.Close -> close()
             VideoPlayerIntent.LoadVideo -> loadVideo()
             is VideoPlayerIntent.PlaybackFailed ->
                 _state.update { it.copy(error = "This video can't be played (${intent.reason})") }
@@ -83,9 +89,30 @@ class VideoPlayerViewModel @Inject constructor(
         player.pause()
     }
 
+    private fun open(videoId: String) {
+        val current = _state.value
+        savedStateHandle[KEY_VIDEO_ID] = videoId
+        _state.update { it.copy(isOpen = true, videoId = videoId, openRequest = it.openRequest + 1) }
+        // Reopening the video that's already in the floating window just expands it.
+        if (current.isOpen && current.videoId == videoId) return
+        _state.update { it.copy(video = null) }
+        loadVideo()
+    }
+
+    private fun close() {
+        loadJob?.cancel()
+        savedStateHandle.remove<String>(KEY_VIDEO_ID)
+        player.pause()
+        player.stop()
+        player.clearMediaItems()
+        _state.update { VideoPlayerState(openRequest = it.openRequest) }
+    }
+
     private fun loadVideo() {
+        val videoId = _state.value.videoId ?: return
+        loadJob?.cancel()
         _state.update { it.copy(isLoading = true, error = null) }
-        viewModelScope.launch {
+        loadJob = viewModelScope.launch {
             try {
                 val video = repository.getVideo(videoId)
                 if (video == null) {
@@ -113,5 +140,9 @@ class VideoPlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         player.release()
+    }
+
+    private companion object {
+        const val KEY_VIDEO_ID = "videoId"
     }
 }

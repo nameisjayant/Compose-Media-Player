@@ -2,13 +2,20 @@ package com.nameisjayant.androidpractice.media.videos.presentation
 
 import android.content.res.Configuration
 import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,14 +23,15 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -41,33 +49,46 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.lerp
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.round
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.PlaybackException
@@ -78,45 +99,139 @@ import androidx.media3.ui.compose.ContentFrame
 import androidx.media3.ui.compose.SURFACE_TYPE_TEXTURE_VIEW
 import androidx.media3.ui.compose.state.rememberPlayPauseButtonState
 import com.nameisjayant.androidpractice.R
+import com.nameisjayant.androidpractice.media.navigation.MediaMotion
 import com.nameisjayant.androidpractice.media.ui.MediaColors
 import com.nameisjayant.androidpractice.media.videos.data.Video
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** How long the controls stay up after the last touch while the video plays. */
 private const val CONTROLS_TIMEOUT_MS = 3_000L
+
+/** How much the app is dimmed while the full player slides over it. */
+private const val UNDERLAY_DIM = 0.4f
+
+/** The floating window's width as a share of the screen, capped at [MiniMaxWidth]. */
+private const val MINI_WIDTH_FRACTION = 0.5f
+private val MiniMaxWidth = 280.dp
+private val MiniMargin = 12.dp
+private val MiniCornerRadius = 14.dp
+private val MiniElevation = 16.dp
+
+/** A flick faster than this finishes the shrink (or grow) whatever the distance dragged. */
+private val FlingVelocity = 800.dp
+
+private val SettleSpec = spring<Float>(stiffness = Spring.StiffnessMediumLow)
+private val SnapSpec = spring<Offset>(stiffness = Spring.StiffnessMediumLow)
 
 private val TopScrim = Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent))
 private val BottomScrim = Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f)))
 
 /**
+ * The video player, floating over the whole app.
+ *
  * Portrait: a 16:9 player at the top with the title and description below it.
  * Landscape: only the video, edge to edge, with the system bars hidden.
+ * Swiping the video down shrinks it into a floating window above the tab bar that keeps playing
+ * while the user browses; drag it to any corner, tap it to grow it back, or close it.
  * Picture-in-picture: only the video, with no controls, while the app is in the background.
+ *
+ * @param bottomInset space taken by the tab bar, which the floating window sits above.
  */
 @OptIn(UnstableApi::class)
 @Composable
-fun VideoPlayerScreen(
-    onBack: () -> Unit,
+fun VideoPlayerOverlay(
+    viewModel: VideoPlayerViewModel,
+    sheetState: PlayerSheetState,
+    bottomInset: Dp,
     modifier: Modifier = Modifier,
-    viewModel: VideoPlayerViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val player = viewModel.player
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val isInPip = rememberIsInPictureInPicture()
     val activity = LocalActivity.current
     val playPause = rememberPlayPauseButtonState(player)
+    val playbackState by rememberPlaybackState(player)
     val videoAspectRatio by rememberVideoAspectRatio(player)
-    var videoBounds by remember { mutableStateOf<Rect?>(null) }
+    val collapse = sheetState.collapse
+    val offscreen = sheetState.offscreen
+    val miniDrag = sheetState.miniDrag
+    val isCollapsing by remember { derivedStateOf { collapse.value > 0f } }
+    val isMini by remember { derivedStateOf { collapse.value >= 1f } }
+    val videoOnly = isLandscape || isInPip
 
-    HideSystemBarsEffect(hide = isLandscape && !isInPip)
+    var overlaySize by remember { mutableStateOf(IntSize.Zero) }
+    val topInset = WindowInsets.statusBars.getTop(density)
+    val geometry = remember(overlaySize, topInset, bottomInset, videoOnly, density) {
+        with(density) {
+            SheetGeometry(
+                width = overlaySize.width.toFloat(),
+                height = overlaySize.height.toFloat(),
+                topInset = topInset.toFloat(),
+                bottomInset = bottomInset.toPx(),
+                videoOnly = videoOnly,
+                miniWidth = min(overlaySize.width * MINI_WIDTH_FRACTION, MiniMaxWidth.toPx()),
+                margin = MiniMargin.toPx(),
+            )
+        }
+    }
+    val flingVelocity = with(density) { FlingVelocity.toPx() }
 
-    // Going home (or swiping up) mid-video keeps it playing in a floating window.
+    /** Where the video sits right now; read while laying out, so animating it skips recomposition. */
+    fun videoRect(): Rect = when {
+        isInPip -> geometry.full
+        else -> lerp(geometry.expanded, geometry.mini(sheetState.corner).translate(miniDrag.value), collapse.value)
+    }
+
+    suspend fun close() {
+        offscreen.animateTo(1f, MediaMotion.exitSpec())
+        viewModel.onIntent(VideoPlayerIntent.Close)
+    }
+
+    val onClose: () -> Unit = { scope.launch { close() } }
+    val onExpand: () -> Unit = { scope.launch { collapse.animateTo(0f, SettleSpec) } }
+
+    // Slide in when a video is opened, or grow back out of the floating window when one is picked
+    // while it's shrunk. Skipped after rotation, where the request has already been handled.
+    LaunchedEffect(state.openRequest) {
+        if (state.openRequest == sheetState.handledRequest) return@LaunchedEffect
+        sheetState.handledRequest = state.openRequest
+        if (offscreen.value > 0f) {
+            collapse.snapTo(0f)
+            miniDrag.snapTo(Offset.Zero)
+            offscreen.animateTo(0f, MediaMotion.enterSpec())
+        } else {
+            collapse.animateTo(0f, SettleSpec)
+        }
+    }
+
+    // Back slides the full player away, following the predictive-back gesture as it goes. The
+    // floating window leaves back to the screen underneath.
+    PredictiveBackHandler(enabled = !isMini && !isInPip) { progress ->
+        try {
+            progress.collect { offscreen.snapTo(it.progress) }
+            close()
+        } catch (e: CancellationException) {
+            scope.launch { offscreen.animateTo(0f, MediaMotion.enterSpec()) }
+            throw e
+        }
+    }
+
+    HideSystemBarsEffect(hide = isLandscape && !isInPip && !isMini)
+
+    // Going home (or swiping up) mid-video keeps it playing in a system floating window.
     PictureInPictureEffect(
         autoEnter = !playPause.showPlay && state.error == null,
         isPlaying = !playPause.showPlay,
         videoAspectRatio = videoAspectRatio,
-        videoBounds = videoBounds,
+        videoBounds = if (isMini) geometry.mini(sheetState.corner) else geometry.expanded,
         onPlayPause = playPause::onClick,
     )
 
@@ -141,38 +256,258 @@ fun VideoPlayerScreen(
         onDispose { player.removeListener(listener) }
     }
 
-    val onRetry = { viewModel.onIntent(VideoPlayerIntent.LoadVideo) }
-    val videoOnly = isLandscape || isInPip
+    // Dragging is tracked on this full-screen layer rather than the video, which moves and
+    // shrinks under the finger. Once it's a floating window the layer steps out of the way, so
+    // the app underneath takes touches again; only the window itself does.
+    // Undispatched, so each step lands before the release animation starts rather than cutting it off.
+    val collapseDrag = rememberDraggableState { delta ->
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
+            collapse.snapTo(collapse.value + delta / geometry.dragTravel)
+        }
+    }
 
-    // One layout for every mode, so the video surface stays put (no black flash) as the window
-    // rotates or shrinks into picture-in-picture; only its size changes.
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .background(if (videoOnly) Color.Black else MediaColors.Canvas),
+            .onSizeChanged { overlaySize = it }
+            .then(
+                if (isMini || isInPip) {
+                    Modifier
+                } else {
+                    Modifier.draggable(
+                        state = collapseDrag,
+                        orientation = Orientation.Vertical,
+                        onDragStarted = {
+                            sheetState.corner = sheetState.corner.toBottom()
+                            miniDrag.snapTo(Offset.Zero)
+                        },
+                        onDragStopped = { velocity ->
+                            val target = when {
+                                velocity > flingVelocity -> 1f
+                                velocity < -flingVelocity -> 0f
+                                collapse.value > 0.5f -> 1f
+                                else -> 0f
+                            }
+                            collapse.animateTo(target, SettleSpec, initialVelocity = velocity / geometry.dragTravel)
+                        },
+                    )
+                },
+            ),
     ) {
-        VideoSurface(
-            player = player,
-            state = state,
-            isFullScreen = isLandscape,
-            isInPip = isInPip,
-            onBack = onBack,
-            onRetry = onRetry,
-            modifier = Modifier
-                .then(
-                    if (videoOnly) {
-                        Modifier.fillMaxSize()
-                    } else {
-                        Modifier
-                            .background(Color.Black)
-                            .statusBarsPadding()
-                            .fillMaxWidth()
-                            .aspectRatio(16f / 9f)
-                    },
-                )
-                .onGloballyPositioned { videoBounds = it.boundsInWindow() },
+        // The player's backdrop, fading out as it shrinks to reveal the app, plus a dim over the
+        // app while the full player slides in or out.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .drawBehind {
+                    val shown = if (isInPip) 1f else 1f - collapse.value
+                    val slide = if (isInPip) 0f else offscreen.value
+                    drawRect(Color.Black, alpha = UNDERLAY_DIM * shown * (1f - slide))
+                    translate(top = slide * size.height) {
+                        drawRect(if (videoOnly) Color.Black else MediaColors.Canvas, alpha = shown)
+                        // Black behind the status bar, above the video.
+                        drawRect(Color.Black, size = Size(size.width, geometry.expanded.top), alpha = shown)
+                    }
+                },
         )
-        if (!videoOnly) state.video?.let { VideoDetails(it) }
+
+        if (!videoOnly && !isMini) {
+            state.video?.let { video ->
+                VideoDetails(
+                    video = video,
+                    modifier = Modifier
+                        .padding(top = with(density) { geometry.expanded.bottom.toDp() })
+                        .graphicsLayer {
+                            // Gone by half way, drifting down with the video as it leaves.
+                            alpha = (1f - 2f * collapse.value).coerceAtLeast(0f)
+                            translationY = offscreen.value * geometry.height + collapse.value * geometry.dragTravel
+                        },
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .offset { videoRect().topLeft.round() }
+                .layout { measurable, _ ->
+                    val rect = videoRect()
+                    val placeable = measurable.measure(
+                        Constraints.fixed(
+                            rect.width.roundToInt().coerceAtLeast(0),
+                            rect.height.roundToInt().coerceAtLeast(0),
+                        ),
+                    )
+                    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+                }
+                .graphicsLayer {
+                    if (isInPip) return@graphicsLayer
+                    if (isMini) {
+                        // The floating window fades and shrinks away in place when closed.
+                        val scale = 1f - 0.15f * offscreen.value
+                        alpha = 1f - offscreen.value
+                        scaleX = scale
+                        scaleY = scale
+                    } else {
+                        translationY = offscreen.value * geometry.height
+                    }
+                    shape = RoundedCornerShape(MiniCornerRadius * collapse.value)
+                    clip = true
+                    shadowElevation = MiniElevation.toPx() * collapse.value
+                }
+                .background(Color.Black),
+        ) {
+            VideoSurface(
+                player = player,
+                state = state,
+                isFullScreen = isLandscape,
+                showChrome = !isCollapsing && !isInPip,
+                onBack = onClose,
+                onRetry = { viewModel.onIntent(VideoPlayerIntent.LoadVideo) },
+                modifier = Modifier.fillMaxSize(),
+            )
+            AnimatedVisibility(
+                visible = isMini && !isInPip,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.matchParentSize(),
+            ) {
+                MiniPlayerControls(
+                    showPlay = playPause.showPlay,
+                    isEnded = playbackState == Player.STATE_ENDED,
+                    playPauseEnabled = playPause.isEnabled,
+                    onPlayPause = playPause::onClick,
+                    onClose = onClose,
+                    onExpand = onExpand,
+                    onDrag = { amount ->
+                        scope.launch(start = CoroutineStart.UNDISPATCHED) { miniDrag.snapTo(miniDrag.value + amount) }
+                    },
+                    onDragEnd = {
+                        scope.launch {
+                            // Snap to whichever corner the window was let go nearest.
+                            val current = geometry.mini(sheetState.corner).translate(miniDrag.value)
+                            val target = geometry.nearestCorner(current.center)
+                            miniDrag.snapTo(current.topLeft - geometry.mini(target).topLeft)
+                            sheetState.corner = target
+                            miniDrag.animateTo(Offset.Zero, SnapSpec)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+}
+
+/** Where the video sits full screen and as a floating window, in the overlay's pixels. */
+private class SheetGeometry(
+    val width: Float,
+    val height: Float,
+    topInset: Float,
+    private val bottomInset: Float,
+    videoOnly: Boolean,
+    private val miniWidth: Float,
+    private val margin: Float,
+) {
+    private val miniHeight = miniWidth * 9f / 16f
+    private val miniTop = topInset + margin
+
+    val full = Rect(0f, 0f, width, height)
+
+    val expanded: Rect = if (videoOnly) full else Rect(0f, topInset, width, topInset + width * 9f / 16f)
+
+    fun mini(corner: MiniPlayerCorner): Rect {
+        val left = if (corner.isLeft) margin else width - margin - miniWidth
+        val top = if (corner.isTop) miniTop else height - bottomInset - margin - miniHeight
+        return Rect(left, top, left + miniWidth, top + miniHeight)
+    }
+
+    /** How far the finger travels to take the full player all the way down to the window. */
+    val dragTravel: Float = (mini(MiniPlayerCorner.BottomRight).top - expanded.top).coerceAtLeast(1f)
+
+    fun nearestCorner(point: Offset): MiniPlayerCorner {
+        val left = point.x < width / 2
+        return if (point.y < height / 2) {
+            if (left) MiniPlayerCorner.TopLeft else MiniPlayerCorner.TopRight
+        } else {
+            if (left) MiniPlayerCorner.BottomLeft else MiniPlayerCorner.BottomRight
+        }
+    }
+}
+
+/**
+ * Play/pause and close on the floating window. Tapping anywhere else grows it back to the full
+ * player; dragging moves it around.
+ */
+@Composable
+private fun MiniPlayerControls(
+    showPlay: Boolean,
+    isEnded: Boolean,
+    playPauseEnabled: Boolean,
+    onPlayPause: () -> Unit,
+    onClose: () -> Unit,
+    onExpand: () -> Unit,
+    onDrag: (Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val currentOnDrag by rememberUpdatedState(onDrag)
+    val currentOnDragEnd by rememberUpdatedState(onDragEnd)
+    Box(
+        modifier = modifier
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragEnd = { currentOnDragEnd() },
+                    onDragCancel = { currentOnDragEnd() },
+                ) { change, amount ->
+                    change.consume()
+                    currentOnDrag(amount)
+                }
+            }
+            .clickable(onClickLabel = "Expand player", onClick = onExpand)
+            .background(Color.Black.copy(alpha = 0.2f)),
+    ) {
+        IconButton(
+            onClick = onPlayPause,
+            enabled = playPauseEnabled,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(MediaColors.Glass),
+        ) {
+            Icon(
+                painter = painterResource(
+                    when {
+                        isEnded -> R.drawable.ic_replay
+                        showPlay -> R.drawable.ic_play
+                        else -> R.drawable.ic_pause
+                    },
+                ),
+                contentDescription = when {
+                    isEnded -> "Replay"
+                    showPlay -> "Play"
+                    else -> "Pause"
+                },
+                tint = Color.White,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(4.dp)
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(MediaColors.Glass),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_close),
+                contentDescription = "Close player",
+                tint = Color.White,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
@@ -183,7 +518,7 @@ private fun VideoSurface(
     player: Player,
     state: VideoPlayerState,
     isFullScreen: Boolean,
-    isInPip: Boolean,
+    showChrome: Boolean,
     onBack: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
@@ -206,8 +541,9 @@ private fun VideoSurface(
 
     Box(
         modifier = modifier.clickable(
-            // The picture-in-picture window handles its own taps (and has no room for controls).
-            enabled = !isInPip,
+            // Picture-in-picture and the floating window handle their own taps (and have no room
+            // for these controls).
+            enabled = showChrome,
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             onClickLabel = if (controlsVisible) "Hide controls" else "Show controls",
@@ -223,7 +559,7 @@ private fun VideoSurface(
         )
 
         when {
-            isInPip -> Unit
+            !showChrome && (state.error != null || state.isLoading) -> Unit
 
             state.error != null -> PlayerError(
                 message = state.error,
@@ -241,7 +577,7 @@ private fun VideoSurface(
             )
 
             else -> AnimatedVisibility(
-                visible = controlsVisible,
+                visible = controlsVisible && showChrome,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxSize(),
@@ -266,7 +602,7 @@ private fun VideoSurface(
         // Back stays reachable even while the controls are hidden in portrait; in full screen it
         // comes and goes with them (with the title), so nothing sits on the video.
         AnimatedVisibility(
-            visible = !isInPip && (!isFullScreen || controlsVisible || state.error != null),
+            visible = showChrome && (!isFullScreen || controlsVisible || state.error != null),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.TopStart),
